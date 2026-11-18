@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/functions.php';
+require_once __DIR__ . '/../includes/ratelimit.php';
 
 $pageTitle = 'Регистрация';
 $errors = [];
@@ -10,6 +11,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Проверка CSRF
     if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Недействительный запрос. Попробуйте снова.';
+    } elseif (!rateLimitCheck('register', 3, 3600, true)) {
+        $errors[] = 'Слишком много регистраций с вашего адреса. Попробуйте через час.';
     } else {
         $username = trim($_POST['username'] ?? '');
         $email = trim($_POST['email'] ?? '');

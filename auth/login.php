@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/functions.php';
+require_once __DIR__ . '/../includes/ratelimit.php';
 
 // Если уже авторизован - редирект на главную
 if (isLoggedIn()) {
@@ -13,6 +14,8 @@ $username = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Недействительный запрос. Попробуйте снова.';
+    } elseif (!rateLimitCheck('login', 5, 900, true)) {
+        $errors[] = 'Слишком много попыток входа. Подождите ' . ceil(rateLimitRetryAfter('login', 900, true) / 60) . ' мин. и попробуйте снова.';
     } else {
         $username = trim($_POST['username'] ?? '');
         $password = $_POST['password'] ?? '';
@@ -31,7 +34,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!$user['is_active']) {
                     $errors[] = 'Ваш аккаунт заблокирован';
                 } else {
-                    // Успешный вход
+                    // Успешный вход — сбрасываем счётчик попыток для этого IP
+                    $stmt = $db->prepare("DELETE FROM rate_limits WHERE action = 'login' AND actor_key = ?");
+                    $stmt->execute(['ip' . rateLimitIp()]);
+
                     session_regenerate_id(true);
                     $_SESSION['user_id'] = $user['id'];
                     $_SESSION['username'] = $user['username'];

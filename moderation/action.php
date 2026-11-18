@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/permissions.php';
 require_once __DIR__ . '/../includes/notifications.php';
+require_once __DIR__ . '/../includes/attachments.php';
 requireModerator();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') redirect('/moderation/index.php');
@@ -64,7 +65,10 @@ try {
         }
 
         case 'topic_delete': {
+            $attachNames = attachCollectTopicTree($id);
+            attachPurgeTopicTree($id);
             $db->prepare("DELETE FROM topics WHERE id = ?")->execute([$id]);
+            foreach ($attachNames as $sn) attachUnlink($sn);
             logModeration('topic_delete', 'topic', $id, $reason);
             done('Тема удалена', '/forum.php');
             break;

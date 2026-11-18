@@ -6,6 +6,9 @@ $db = Database::getInstance()->getConnection();
 $type = ($_GET['type'] ?? '') === 'post' ? 'post' : 'topic';
 $id = (int)($_GET['id'] ?? 0);
 
+$isStaff = isModerator();
+$staffFlag = $isStaff ? 1 : 0;
+
 if ($type === 'topic') {
     $stmt = $db->prepare("
         SELECT t.id, t.title, t.content, t.edit_count, t.id AS back_id
@@ -13,7 +16,9 @@ if ($type === 'topic') {
         JOIN forums f ON f.id = t.forum_id
         JOIN categories c ON c.id = f.category_id
         WHERE t.id = ? AND f.is_active = 1 AND c.is_active = 1
+          AND (t.is_hidden = 0 OR ? = 1)
     ");
+    $stmt->execute([$id, $staffFlag]);
 } else {
     $stmt = $db->prepare("
         SELECT p.id, NULL AS title, p.content, p.edit_count, p.topic_id AS back_id
@@ -22,9 +27,10 @@ if ($type === 'topic') {
         JOIN forums f ON f.id = t.forum_id
         JOIN categories c ON c.id = f.category_id
         WHERE p.id = ? AND f.is_active = 1 AND c.is_active = 1
+          AND (p.is_hidden = 0 OR ? = 1) AND (t.is_hidden = 0 OR ? = 1)
     ");
+    $stmt->execute([$id, $staffFlag, $staffFlag]);
 }
-$stmt->execute([$id]);
 $obj = $stmt->fetch();
 
 if (!$obj) {

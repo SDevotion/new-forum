@@ -12,6 +12,8 @@ $categories = $db->query("
     ORDER BY sort_order ASC, id ASC
 ")->fetchAll();
 
+$staffFlag = isModerator() ? 1 : 0;
+
 $forumsStmt = $db->prepare("
     SELECT f.*,
            lp.content   AS last_content,
@@ -20,9 +22,9 @@ $forumsStmt = $db->prepare("
            lt.id        AS last_topic_id,
            lt.title     AS last_topic_title
     FROM forums f
-    LEFT JOIN posts lp ON lp.id = f.last_post_id
+    LEFT JOIN posts lp ON lp.id = f.last_post_id AND (lp.is_hidden = 0 OR ? = 1)
     LEFT JOIN users lu ON lu.id = lp.user_id
-    LEFT JOIN topics lt ON lt.id = lp.topic_id
+    LEFT JOIN topics lt ON lt.id = lp.topic_id AND (lt.is_hidden = 0 OR ? = 1)
     WHERE f.category_id = ? AND f.is_active = 1
     ORDER BY f.sort_order ASC, f.id ASC
 ");
@@ -44,7 +46,7 @@ require_once __DIR__ . '/includes/header.php';
 <?php else: ?>
     <?php foreach ($categories as $category): ?>
         <?php
-        $forumsStmt->execute([$category['id']]);
+        $forumsStmt->execute([$staffFlag, $staffFlag, $category['id']]);
         $forums = $forumsStmt->fetchAll();
         if (empty($forums)) continue;
         ?>

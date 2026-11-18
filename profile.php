@@ -34,6 +34,8 @@ if (!$profile) {
 
 $pageTitle = 'Профиль: ' . $profile['username'];
 $isOwn = $currentUser && (int)$currentUser['id'] === (int)$profile['id'];
+$isStaff = isModerator();
+$staffFlag = $isStaff ? 1 : 0;
 $roles = ['user' => 'Участник', 'moderator' => 'Модератор', 'admin' => 'Администратор'];
 
 // Вкладка
@@ -43,11 +45,13 @@ $page = max(1, (int)($_GET['page'] ?? 1));
 $offset = ($page - 1) * $perPage;
 
 if ($tab === 'topics') {
-    $total = (int)$db->query("
+    $stmt = $db->prepare("
         SELECT COUNT(*) FROM topics t
         JOIN forums f ON f.id = t.forum_id
-        WHERE t.user_id = $userId AND f.is_active = 1
-    ")->fetchColumn();
+        WHERE t.user_id = ? AND f.is_active = 1 AND (t.is_hidden = 0 OR ? = 1)
+    ");
+    $stmt->execute([$userId, $staffFlag]);
+    $total = (int)$stmt->fetchColumn();
 
     $totalPages = max(1, (int)ceil($total / $perPage));
     if ($page > $totalPages) { $page = $totalPages; $offset = ($page - 1) * $perPage; }
@@ -57,18 +61,21 @@ if ($tab === 'topics') {
                f.title AS forum_title
         FROM topics t
         JOIN forums f ON f.id = t.forum_id
-        WHERE t.user_id = ? AND f.is_active = 1
+        WHERE t.user_id = ? AND f.is_active = 1 AND (t.is_hidden = 0 OR ? = 1)
         ORDER BY t.created_at DESC, t.id DESC
         LIMIT $perPage OFFSET $offset
     ");
-    $stmt->execute([$userId]);
+    $stmt->execute([$userId, $staffFlag]);
 } else {
-    $total = (int)$db->query("
+    $stmt = $db->prepare("
         SELECT COUNT(*) FROM posts p
         JOIN topics t ON t.id = p.topic_id
         JOIN forums f ON f.id = t.forum_id
-        WHERE p.user_id = $userId AND f.is_active = 1
-    ")->fetchColumn();
+        WHERE p.user_id = ? AND f.is_active = 1
+          AND (p.is_hidden = 0 OR ? = 1) AND (t.is_hidden = 0 OR ? = 1)
+    ");
+    $stmt->execute([$userId, $staffFlag, $staffFlag]);
+    $total = (int)$stmt->fetchColumn();
 
     $totalPages = max(1, (int)ceil($total / $perPage));
     if ($page > $totalPages) { $page = $totalPages; $offset = ($page - 1) * $perPage; }
@@ -80,10 +87,11 @@ if ($tab === 'topics') {
         JOIN topics t ON t.id = p.topic_id
         JOIN forums f ON f.id = t.forum_id
         WHERE p.user_id = ? AND f.is_active = 1
+          AND (p.is_hidden = 0 OR ? = 1) AND (t.is_hidden = 0 OR ? = 1)
         ORDER BY p.created_at DESC, p.id DESC
         LIMIT $perPage OFFSET $offset
     ");
-    $stmt->execute([$userId]);
+    $stmt->execute([$userId, $staffFlag, $staffFlag]);
 }
 $items = $stmt->fetchAll();
 

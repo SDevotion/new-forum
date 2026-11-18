@@ -1,0 +1,83 @@
+<?php
+require_once __DIR__ . '/functions.php';
+require_once __DIR__ . '/avatar.php';
+require_once __DIR__ . '/permissions.php';
+require_once __DIR__ . '/stats.php';
+require_once __DIR__ . '/notifications.php';
+$currentUser = getCurrentUser();
+
+// Онлайн-трекинг
+touchActivity();
+trackGuest();
+$flashMessage = getFlashMessage();
+?>
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?= isset($pageTitle) ? escape($pageTitle) . ' - ' : '' ?>Форум</title>
+    <link rel="stylesheet" href="/assets/css/style.css">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">
+                    <a href="/index.php">
+                        <span class="logo-icon">💬</span>
+                        <span class="logo-text">ForumHub</span>
+                    </a>
+                </div>
+                
+                <nav class="nav">
+                    <a href="/index.php" class="nav-link">Главная</a>
+                    <a href="/forum.php" class="nav-link">Форум</a>
+                    <a href="/members.php" class="nav-link">Участники</a>
+                    <a href="/stats.php" class="nav-link">Статистика</a>
+                    <a href="/search.php" class="nav-link">Поиск</a>
+                    <?php if ($currentUser): ?>
+                        <a href="/notifications.php" class="nav-link nav-link-notif" title="Уведомления">
+                            <span class="notif-bell">🔔</span>
+                            <?php $nc = unreadCount(); if ($nc): ?><span class="notif-badge"><?= $nc > 99 ? '99+' : $nc ?></span><?php endif; ?>
+                        </a>
+                        <a href="/profile.php?id=<?= (int)$currentUser['id'] ?>" class="nav-link">Профиль</a>
+                    <?php endif; ?>
+                    <?php if (isModerator()): ?>
+                        <a href="/moderation/index.php" class="nav-link nav-link-mod">
+                            Модерация
+                            <?php $rc = newReportsCount(); if ($rc): ?><span class="nav-badge"><?= $rc ?></span><?php endif; ?>
+                        </a>
+                    <?php endif; ?>
+                </nav>
+                
+                <form method="GET" action="/search.php" class="header-search">
+                    <input type="text" name="q" placeholder="Поиск..." maxlength="100" value="<?= escape($_GET['q'] ?? '') ?>">
+                    <button type="submit" title="Найти">🔍</button>
+                </form>
+
+                <div class="user-menu">
+                    <?php if ($currentUser): ?>
+                        <a href="/profile.php?id=<?= (int)$currentUser['id'] ?>" class="user-info">
+                            <img src="<?= avatarUrl($currentUser['avatar']) ?>" 
+                                 alt="Avatar" class="user-avatar">
+                            <span class="username"><?= escape($currentUser['username']) ?></span>
+                        </a>
+                        <a href="/auth/logout.php" class="btn btn-outline">Выйти</a>
+                    <?php else: ?>
+                        <a href="/auth/login.php" class="btn btn-outline">Войти</a>
+                        <a href="/auth/register.php" class="btn btn-primary">Регистрация</a>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+    </header>
+    
+    <main class="main">
+        <div class="container">
+            <?php if ($flashMessage): ?>
+                <div class="alert alert-<?= escape($flashMessage['type']) ?>">
+                    <?= escape($flashMessage['message']) ?>
+                    <button class="alert-close">&times;</button>
+                </div>
+            <?php endif; ?>

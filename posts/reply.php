@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/markdown.php';
+require_once __DIR__ . '/../includes/ratelimit.php';
 
 $topicId = (int)($_POST['topic_id'] ?? 0);
 $backUrl = '/topic.php?id=' . $topicId;
@@ -57,6 +58,12 @@ if (mb_strlen($content) < 2) {
 
 if (mb_strlen($content) > 20000) {
     setFlashMessage('error', 'Сообщение слишком длинное (максимум 20000 символов)');
+    redirect($backUrl);
+}
+
+// Ограничение частоты ответов (антифлуд)
+if (!rateLimitCheck('post_reply', 10, 300)) {
+    setFlashMessage('error', 'Слишком много сообщений подряд. Подождите ' . ceil(rateLimitRetryAfter('post_reply', 300) / 60) . ' мин.');
     redirect($backUrl);
 }
 

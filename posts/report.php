@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/permissions.php';
+require_once __DIR__ . '/../includes/ratelimit.php';
 
 if (!isLoggedIn()) { setFlashMessage('error', 'Необходимо войти'); redirect('/auth/login.php'); }
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') redirect('/index.php');
@@ -14,6 +15,7 @@ if (!preg_match('#^/[A-Za-z0-9_./?=&#%-]*$#', $back)) $back = '/forum.php';
 if ($id <= 0) { setFlashMessage('error', 'Объект не найден'); redirect($back); }
 if (mb_strlen($reason) < 5) { setFlashMessage('error', 'Опишите причину жалобы (минимум 5 символов)'); redirect($back); }
 if (mb_strlen($reason) > 500) { setFlashMessage('error', 'Причина слишком длинная (максимум 500 символов)'); redirect($back); }
+if (!rateLimitCheck('report', 5, 3600)) { setFlashMessage('error', 'Слишком много жалоб за последнее время. Попробуйте позже.'); redirect($back); }
 
 $db = Database::getInstance()->getConnection();
 $u = getCurrentUser();

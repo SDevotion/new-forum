@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/permissions.php';
 require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/markdown.php';
+require_once __DIR__ . '/../includes/attachments.php';
 require_once __DIR__ . '/../includes/ratelimit.php';
 
 if (!isLoggedIn()) {
@@ -54,6 +55,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = 'Сообщение слишком длинное (максимум 20000 символов)';
         }
 
+        $attachFiles = attachNormalizeFiles();
+        $errors = array_merge($errors, attachValidate($attachFiles));
+
         if (empty($errors)) {
             try {
                 $stmt = $db->prepare("
@@ -62,6 +66,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ");
                 $stmt->execute([$forumId, $currentUser['id'], $title, $content]);
                 $topicId = $db->lastInsertId();
+
+                try {
+                    attachStore($attachFiles, 'topic', (int)$topicId, (int)$currentUser['id']);
+                } catch (RuntimeException $e) {
+                    error_log('Attach store error: ' . $e->getMessage());
+                    setFlashMessage('info', 'Тема создана, но часть вложений не удалось сохранить');
+                }
 
                 // Автор автоматически подписывается на свою тему
                 subscribeTopic($currentUser['id'], $topicId);
@@ -111,7 +122,7 @@ require_once __DIR__ . '/../includes/header.php';
         </div>
     <?php endif; ?>
 
-    <form method="POST" action="" id="topicForm">
+    <form method="POST" action="" id="topicForm" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
         <input type="hidden" name="forum_id" value="<?= (int)$forum['id'] ?>">
 
@@ -136,6 +147,10 @@ require_once __DIR__ . '/../includes/header.php';
             require __DIR__ . '/../includes/md_editor.php';
             ?>
             <small class="form-hint">Минимум 10 символов. Символов: <span id="charCount">0</span></small>
+        </div>
+
+        <div class="form-group">
+            <?php require __DIR__ . '/../includes/attach_upload.php'; ?>
         </div>
 
         <div class="form-actions">

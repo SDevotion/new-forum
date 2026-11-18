@@ -4,6 +4,7 @@ require_once __DIR__ . '/includes/permissions.php';
 require_once __DIR__ . '/includes/editing.php';
 require_once __DIR__ . '/includes/markdown.php';
 require_once __DIR__ . '/includes/notifications.php';
+require_once __DIR__ . '/includes/attachments.php';
 
 $db = Database::getInstance()->getConnection();
 $topicId = (int)($_GET['id'] ?? 0);
@@ -71,6 +72,10 @@ $stmt = $db->prepare("
 ");
 $stmt->execute([$topicId, $isStaff ? 1 : 0]);
 $posts = $stmt->fetchAll();
+
+// Вложения: первое сообщение + ответы текущей страницы
+$topicAttachments = attachForObject('topic', $topicId);
+$postAttachments = attachForTargets('post', array_column($posts, 'id'));
 
 $allForums = $isStaff ? $db->query("SELECT id, title FROM forums WHERE is_active = 1 ORDER BY sort_order, id")->fetchAll() : [];
 $backUrl = '/topic.php?id=' . $topicId . '&page=' . $page;
@@ -179,6 +184,7 @@ require_once __DIR__ . '/includes/header.php';
     <div class="post-body">
         <div class="post-date"><?= date('d.m.Y H:i', strtotime($topic['created_at'])) ?></div>
         <div class="post-content"><?= mdRender($topic['content']) ?></div>
+        <?= attachRender($topicAttachments) ?>
 
         <?php if ($topic['edit_count'] > 0): ?>
             <div class="post-edit-info">
@@ -238,6 +244,7 @@ require_once __DIR__ . '/includes/header.php';
                     <div class="hidden-note">⚠️ Сообщение скрыто модератором.</div>
                 <?php endif; ?>
                 <div class="post-content"><?= mdRender($post['content']) ?></div>
+                <?= attachRender($postAttachments[(int)$post['id']] ?? []) ?>
 
                 <?php if (!empty($post['signature'])): ?>
                     <div class="post-signature"><?= nl2br(escape($post['signature'])) ?></div>
@@ -297,7 +304,7 @@ require_once __DIR__ . '/includes/header.php';
 <?php if ($canReply): ?>
     <div class="reply-box" id="reply">
         <h3 class="reply-title">Ваш ответ</h3>
-        <form method="POST" action="/posts/reply.php" id="replyForm">
+        <form method="POST" action="/posts/reply.php" id="replyForm" enctype="multipart/form-data">
             <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
             <input type="hidden" name="topic_id" value="<?= $topicId ?>">
 
@@ -308,6 +315,10 @@ require_once __DIR__ . '/includes/header.php';
                 require __DIR__ . '/includes/md_editor.php';
                 ?>
                 <small class="form-hint">Символов: <span id="replyCharCount">0</span> / 20000</small>
+            </div>
+
+            <div class="form-group">
+                <?php require __DIR__ . '/includes/attach_upload.php'; ?>
             </div>
 
             <div class="form-actions">

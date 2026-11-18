@@ -24,7 +24,7 @@ $db = Database::getInstance()->getConnection();
 $currentUser = getCurrentUser();
 
 $stmt = $db->prepare("
-    SELECT t.id, t.is_closed, t.replies_count
+    SELECT t.id, t.is_closed, t.is_hidden, t.replies_count
     FROM topics t
     JOIN forums f ON f.id = t.forum_id
     JOIN categories c ON c.id = f.category_id
@@ -35,6 +35,11 @@ $topic = $stmt->fetch();
 
 if (!$topic) {
     setFlashMessage('error', 'Тема не найдена');
+    redirect('/forum.php');
+}
+
+if ($topic['is_hidden']) {
+    setFlashMessage('error', 'Тема недоступна для обсуждения');
     redirect('/forum.php');
 }
 

@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/editing.php';
+require_once __DIR__ . '/../includes/attachments.php';
 
 if (!isLoggedIn()) { setFlashMessage('error', 'Необходимо войти'); redirect('/auth/login.php'); }
 
@@ -44,6 +45,8 @@ if (!canEdit($obj['user_id'], $obj['created_at'])) {
     redirect($backUrl);
 }
 
+$attachExisting = attachForObject($type, $id);
+
 $pageTitle = $type === 'topic' ? 'Редактирование темы' : 'Редактирование сообщения';
 $errors = [];
 $title = $obj['title'] ?? '';
@@ -68,7 +71,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         elseif (mb_strlen($content) > 20000) $errors[] = 'Сообщение слишком длинное (максимум 20000 символов)';
         if (mb_strlen($reason) > 255) $errors[] = 'Причина правки: максимум 255 символов';
 
-        $unchanged = ($content === $obj['content']) && ($type !== 'topic' || $title === $obj['title']);
+        $attachFiles = attachNormalizeFiles();
+        $errors = array_merge($errors, attachValidate($attachFiles));
+
+        // отмеченные к удалению — только вложения этого объекта
+        $removeIds = array_map('intval', (array)($_POST['attach_remove'] ?? []));
+        $validIds = array_map('intval', array_column($attachExisting, 'id'));
+        $removeIds = array_values(array_intersect($removeIds, $validIds));
+
+        $unchanged = ($content === $obj['content']) && ($type !== 'topic' || $title === $obj['title'])
+                     && !$attachFiles && !$removeIds;
         if (empty($errors) && $unchanged) {
             setFlashMessage('info', 'Изменений не внесено');
             redirect($backUrl);
@@ -92,7 +104,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         WHERE id = ?
                     ")->execute([$content, $me['id'], $id]);
                 }
+                // Удаление отмеченных вложений (файлы с диска — только после commit)
+                $removedNames = [];
+                if ($removeIds) {
+                    $in = implode(',', array_fill(0, count($removeIds), '?'));
+                    $st = $db->prepare("SELECT stored_name FROM attachments WHERE target_type = ? AND target_id = ? AND id IN ($in)");
+                    $st->execute(array_merge([$type, $id], $removeIds));
+                    $removedNames = $st->fetchAll(PDO::FETCH_COLUMN);
+                    $db->prepare("DELETE FROM attachments WHERE target_type = ? AND target_id = ? AND id IN ($in)")
+                       ->execute(array_merge([$type, $id], $removeIds));
+                }
                 $db->commit();
+                foreach ($removedNames as $sn) attachUnlink($sn);
+
+                // Новые вложения
+                try {
+                    attachStore($attachFiles, $type, $id, (int)$me['id']);
+                } catch (RuntimeException $e) {
+                    error_log('Attach store error: ' . $e->getMessage());
+                    setFlashMessage('info', 'Изменения сохранены, но часть вложений не удалось сохранить');
+                    redirect($backUrl);
+                }
 
                 setFlashMessage('success', 'Изменения сохранены');
                 redirect($backUrl);
@@ -126,7 +158,7 @@ require_once __DIR__ . '/../includes/header.php';
         <div class="alert alert-error"><ul class="error-list"><?php foreach ($errors as $e): ?><li><?= escape($e) ?></li><?php endforeach; ?></ul></div>
     <?php endif; ?>
 
-    <form method="POST" action="" id="editForm">
+    <form method="POST" action="" id="editForm" enctype="multipart/form-data">
         <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
         <input type="hidden" name="type" value="<?= $type ?>">
         <input type="hidden" name="id" value="<?= $id ?>">
@@ -146,6 +178,10 @@ require_once __DIR__ . '/../includes/header.php';
             require __DIR__ . '/../includes/md_editor.php';
             ?>
             <small class="form-hint">Символов: <span id="charCount">0</span> / 20000</small>
+        </div>
+
+        <div class="form-group">
+            <?php require __DIR__ . '/../includes/attach_upload.php'; ?>
         </div>
 
         <div class="form-group">

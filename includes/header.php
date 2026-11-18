@@ -63,7 +63,10 @@ $flashMessage = getFlashMessage();
                                  alt="Avatar" class="user-avatar">
                             <span class="username"><?= escape($currentUser['username']) ?></span>
                         </a>
-                        <a href="/auth/logout.php" class="btn btn-outline">Выйти</a>
+                        <form method="POST" action="/auth/logout.php" class="inline-form">
+                            <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
+                            <button type="submit" class="btn btn-outline">Выйти</button>
+                        </form>
                     <?php else: ?>
                         <a href="/auth/login.php" class="btn btn-outline">Войти</a>
                         <a href="/auth/register.php" class="btn btn-primary">Регистрация</a>

@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/permissions.php';
 require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/markdown.php';
+require_once __DIR__ . '/../includes/ratelimit.php';
 
 if (!isLoggedIn()) {
     setFlashMessage('error', 'Для создания темы необходимо войти');
@@ -35,6 +36,8 @@ $content = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Недействительный запрос. Попробуйте снова.';
+    } elseif (!rateLimitCheck('topic_create', 5, 600)) {
+        $errors[] = 'Слишком часто создаёте темы. Подождите ' . ceil(rateLimitRetryAfter('topic_create', 600) / 60) . ' мин.';
     } else {
         $title = trim($_POST['title'] ?? '');
         $content = trim($_POST['content'] ?? '');

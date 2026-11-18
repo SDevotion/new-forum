@@ -634,6 +634,77 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
+    // ===== Вложения: превью и валидация =====
+    document.querySelectorAll('.attach-upload').forEach(box => {
+        const input = box.querySelector('.attach-input');
+        const list = box.querySelector('.attach-selected');
+        const maxFiles = parseInt(box.dataset.maxFiles, 10) || 5;
+        const maxSize = parseInt(box.dataset.maxSize, 10) || 5242880;
+        if (!input || !list) return;
+
+        const fmt = b => b >= 1048576 ? (b / 1048576).toFixed(1) + ' МБ'
+                       : b >= 1024 ? (b / 1024).toFixed(1) + ' КБ' : b + ' Б';
+
+        function render() {
+            list.innerHTML = '';
+            const files = Array.from(input.files);
+            files.forEach(f => {
+                const row = document.createElement('div');
+                row.className = 'attach-selected-item';
+                const bad = f.size > maxSize;
+                if (bad) row.classList.add('attach-selected-bad');
+
+                if (f.type.startsWith('image/') && !bad) {
+                    const img = document.createElement('img');
+                    img.className = 'attach-selected-thumb';
+                    img.src = URL.createObjectURL(f);
+                    img.onload = () => URL.revokeObjectURL(img.src);
+                    row.appendChild(img);
+                } else {
+                    const icon = document.createElement('span');
+                    icon.className = 'attach-file-icon';
+                    icon.textContent = '📎';
+                    row.appendChild(icon);
+                }
+                const name = document.createElement('span');
+                name.className = 'attach-file-name';
+                name.textContent = f.name;
+                const size = document.createElement('span');
+                size.className = 'attach-file-size';
+                size.textContent = fmt(f.size) + (bad ? ' — слишком большой!' : '');
+                row.appendChild(name);
+                row.appendChild(size);
+                list.appendChild(row);
+            });
+            if (files.length > maxFiles) {
+                const warn = document.createElement('div');
+                warn.className = 'attach-selected-bad';
+                warn.textContent = 'Выбрано ' + files.length + ' файлов, максимум ' + maxFiles;
+                list.appendChild(warn);
+            }
+        }
+
+        input.addEventListener('change', render);
+
+        const form = box.closest('form');
+        if (form) {
+            form.addEventListener('submit', function(e) {
+                const files = Array.from(input.files);
+                if (!files.length) return;
+                let errors = [];
+                if (files.length > maxFiles) errors.push('Можно прикрепить не более ' + maxFiles + ' файлов');
+                files.forEach(f => {
+                    if (f.size > maxSize) errors.push('«' + f.name + '» больше ' + fmt(maxSize));
+                });
+                if (errors.length) {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    showErrors(errors);
+                }
+            }, true); // capture: раньше блокировки кнопки отправки
+        }
+    });
+
     // ===== Анимация появления элементов =====
     const observerOptions = {
         threshold: 0.1,

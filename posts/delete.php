@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/functions.php';
+require_once __DIR__ . '/../includes/attachments.php';
 
 $topicId = (int)($_POST['topic_id'] ?? 0);
 $postId = (int)($_POST['post_id'] ?? 0);
@@ -35,7 +36,10 @@ if (!$isOwner && !$isStaff) {
 }
 
 try {
+    $attachRows = attachForObject('post', $postId);
+    $db->prepare("DELETE FROM attachments WHERE target_type = 'post' AND target_id = ?")->execute([$postId]);
     $db->prepare("DELETE FROM posts WHERE id = ?")->execute([$postId]);
+    foreach ($attachRows as $ar) attachUnlink($ar['stored_name']);
     unset($_SESSION['last_post_hash'][$topicId]);
     setFlashMessage('success', 'Сообщение удалено');
 } catch (PDOException $e) {

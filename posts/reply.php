@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/markdown.php';
+require_once __DIR__ . '/../includes/attachments.php';
 require_once __DIR__ . '/../includes/ratelimit.php';
 
 $topicId = (int)($_POST['topic_id'] ?? 0);
@@ -67,8 +68,16 @@ if (!rateLimitCheck('post_reply', 10, 300)) {
     redirect($backUrl);
 }
 
-// Защита от дублей (двойная отправка / обновление страницы)
-$hash = md5($content);
+// Вложения
+$attachFiles = attachNormalizeFiles();
+$attachErrors = attachValidate($attachFiles);
+if ($attachErrors) {
+    setFlashMessage('error', implode('; ', $attachErrors));
+    redirect($backUrl);
+}
+
+// Защита от дублей (двойная отправка / обновление страницы; учитываем и файлы)
+$hash = md5($content . serialize(array_map(fn($f) => [$f['name'], $f['size']], $attachFiles)));
 if (isset($_SESSION['last_post_hash'][$topicId]) && $_SESSION['last_post_hash'][$topicId] === $hash) {
     setFlashMessage('info', 'Такое сообщение уже отправлено');
     redirect($backUrl);
@@ -78,6 +87,13 @@ try {
     $stmt = $db->prepare("INSERT INTO posts (topic_id, user_id, content) VALUES (?, ?, ?)");
     $stmt->execute([$topicId, $currentUser['id'], $content]);
     $postId = (int)$db->lastInsertId();
+
+    try {
+        attachStore($attachFiles, 'post', $postId, (int)$currentUser['id']);
+    } catch (RuntimeException $e) {
+        error_log('Attach store error: ' . $e->getMessage());
+        setFlashMessage('info', 'Ответ опубликован, но часть вложений не удалось сохранить');
+    }
 
     $_SESSION['last_post_hash'][$topicId] = $hash;
 

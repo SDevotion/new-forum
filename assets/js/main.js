@@ -339,8 +339,9 @@ document.addEventListener('DOMContentLoaded', function() {
             const file = this.files[0];
             if (!file) return;
 
-            if (file.size > 2 * 1024 * 1024) {
-                showErrors(['Файл слишком большой. Максимум 2 МБ']);
+            const avatarMax = (FG.avatarMaxMb || 2) * 1024 * 1024;
+            if (file.size > avatarMax) {
+                showErrors(['Файл слишком большой. Максимум ' + (FG.avatarMaxMb || 2) + ' МБ']);
                 this.value = '';
                 return;
             }

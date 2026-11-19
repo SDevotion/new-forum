@@ -1,5 +1,11 @@
 // assets/js/main.js
 
+// Лимиты из настроек форума (includes/header.php -> window.FG_CONFIG)
+const FG = Object.assign({
+    titleMin: 5, titleMax: 200, topicMin: 10, replyMin: 2,
+    messageMax: 20000, reportMin: 5, reportMax: 500, passwordMin: 6
+}, window.FG_CONFIG || {});
+
 // ===== Markdown -> HTML (клиентский предпросмотр) =====
 function mdToHtml(src) {
     let text = String(src).replace(/\r\n?/g, '\n');
@@ -131,8 +137,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             
             // Валидация пароля
-            if (password.length < 6) {
-                errors.push('Пароль должен содержать минимум 6 символов');
+            if (password.length < FG.passwordMin) {
+                errors.push('Пароль должен содержать минимум ' + FG.passwordMin + ' символов');
             }
             
             if (password !== passwordConfirm) {
@@ -221,7 +227,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const updateCount = () => {
             const len = contentInput.value.length;
             charCount.textContent = len;
-            charCount.style.color = len > 20000 ? '#ef4444' : '';
+            charCount.style.color = len > FG.messageMax ? '#ef4444' : '';
         };
         contentInput.addEventListener('input', updateCount);
         updateCount();
@@ -235,10 +241,10 @@ document.addEventListener('DOMContentLoaded', function() {
             const content = document.getElementById('content').value.trim();
             let errors = [];
 
-            if (title.length < 5) errors.push('Заголовок должен содержать минимум 5 символов');
-            if (title.length > 200) errors.push('Заголовок не должен превышать 200 символов');
-            if (content.length < 10) errors.push('Сообщение должно содержать минимум 10 символов');
-            if (content.length > 20000) errors.push('Сообщение слишком длинное (максимум 20000 символов)');
+            if (title.length < FG.titleMin) errors.push('Заголовок должен содержать минимум ' + FG.titleMin + ' символов');
+            if (title.length > FG.titleMax) errors.push('Заголовок не должен превышать ' + FG.titleMax + ' символов');
+            if (content.length < FG.topicMin) errors.push('Сообщение должно содержать минимум ' + FG.topicMin + ' символов');
+            if (content.length > FG.messageMax) errors.push('Сообщение слишком длинное (максимум ' + FG.messageMax + ' символов)');
 
             if (errors.length > 0) {
                 e.preventDefault();
@@ -255,7 +261,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!replyContent || !replyCharCount) return;
         const len = replyContent.value.length;
         replyCharCount.textContent = len;
-        replyCharCount.style.color = len > 20000 ? '#ef4444' : '';
+        replyCharCount.style.color = len > FG.messageMax ? '#ef4444' : '';
     }
 
     if (replyContent) {
@@ -300,8 +306,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const text = replyContent.value.trim();
             let errors = [];
 
-            if (text.length < 2) errors.push('Сообщение должно содержать минимум 2 символа');
-            if (text.length > 20000) errors.push('Сообщение слишком длинное (максимум 20000 символов)');
+            if (text.length < FG.replyMin) errors.push('Сообщение должно содержать минимум ' + FG.replyMin + ' символов');
+            if (text.length > FG.messageMax) errors.push('Сообщение слишком длинное (максимум ' + FG.messageMax + ' символов)');
 
             if (errors.length > 0) {
                 e.preventDefault();
@@ -371,7 +377,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         passwordForm.addEventListener('submit', function(e) {
             let errors = [];
-            if (np.value.length < 6) errors.push('Новый пароль должен содержать минимум 6 символов');
+            if (np.value.length < FG.passwordMin) errors.push('Новый пароль должен содержать минимум ' + FG.passwordMin + ' символов');
             if (np.value !== npc.value) errors.push('Новые пароли не совпадают');
             if (errors.length) {
                 e.preventDefault();
@@ -416,9 +422,9 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         document.getElementById('reportForm').addEventListener('submit', function(e) {
-            if (reasonEl.value.trim().length < 5) {
+            if (reasonEl.value.trim().length < FG.reportMin) {
                 e.preventDefault();
-                alert('Опишите причину (минимум 5 символов)');
+                alert('Опишите причину (минимум ' + FG.reportMin + ' символов)');
             }
         });
     }
@@ -456,7 +462,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!counter) return;
             const len = contentEl.value.length;
             counter.textContent = len;
-            counter.style.color = len > 20000 ? '#ef4444' : '';
+            counter.style.color = len > FG.messageMax ? '#ef4444' : '';
         };
         contentEl.addEventListener('input', upd);
         upd();
@@ -472,16 +478,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
         editForm.addEventListener('submit', function(e) {
             const text = contentEl.value.trim();
-            const minLen = titleEl ? 10 : 2;
+            const minLen = titleEl ? FG.topicMin : FG.replyMin;
             let errors = [];
 
             if (titleEl) {
                 const t = titleEl.value.trim();
-                if (t.length < 5) errors.push('Заголовок должен содержать минимум 5 символов');
-                if (t.length > 200) errors.push('Заголовок не должен превышать 200 символов');
+                if (t.length < FG.titleMin) errors.push('Заголовок должен содержать минимум ' + FG.titleMin + ' символов');
+                if (t.length > FG.titleMax) errors.push('Заголовок не должен превышать ' + FG.titleMax + ' символов');
             }
             if (text.length < minLen) errors.push('Сообщение должно содержать минимум ' + minLen + ' символов');
-            if (text.length > 20000) errors.push('Сообщение слишком длинное (максимум 20000 символов)');
+            if (text.length > FG.messageMax) errors.push('Сообщение слишком длинное (максимум ' + FG.messageMax + ' символов)');
 
             if (errors.length) { e.preventDefault(); showErrors(errors); return; }
 

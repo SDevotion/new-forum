@@ -37,12 +37,12 @@ $topic = $stmt->fetch();
 
 if (!$topic) {
     setFlashMessage('error', 'Тема не найдена');
-    redirect('/forum.php');
+    redirect('/index.php');
 }
 
 if ($topic['is_hidden']) {
     setFlashMessage('error', 'Тема недоступна для обсуждения');
-    redirect('/forum.php');
+    redirect('/index.php');
 }
 
 if ($topic['is_closed']) {

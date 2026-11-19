@@ -9,8 +9,8 @@ if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) { setFlashMessage('error', 'Н
 $type = ($_POST['target_type'] ?? '') === 'post' ? 'post' : 'topic';
 $id = (int)($_POST['target_id'] ?? 0);
 $reason = trim($_POST['reason'] ?? '');
-$back = $_POST['back'] ?? '/forum.php';
-if (!preg_match('#^/[A-Za-z0-9_./?=&#%-]*$#', $back)) $back = '/forum.php';
+$back = $_POST['back'] ?? '/index.php';
+if (!preg_match('#^/[A-Za-z0-9_./?=&#%-]*$#', $back)) $back = '/index.php';
 
 if ($id <= 0) { setFlashMessage('error', 'Объект не найден'); redirect($back); }
 if (mb_strlen($reason) < 5) { setFlashMessage('error', 'Опишите причину жалобы (минимум 5 символов)'); redirect($back); }

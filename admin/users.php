@@ -9,7 +9,7 @@ require_once __DIR__ . '/../includes/pagination.php';
 
 $q = trim($_GET['q'] ?? '');
 $roleFilter = $_GET['role'] ?? '';
-$perPage = 25;
+$perPage = max(1, setting('per_page_staff', 15));
 $page = max(1, (int)($_GET['page'] ?? 1));
 $offset = ($page - 1) * $perPage;
 

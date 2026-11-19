@@ -26,7 +26,7 @@ $forum = $stmt->fetch();
 
 if (!$forum) {
     setFlashMessage('error', 'Раздел не найден');
-    redirect('/forum.php');
+    redirect('/index.php');
 }
 
 $pageTitle = 'Создание темы';
@@ -100,8 +100,6 @@ require_once __DIR__ . '/../includes/header.php';
 
 <nav class="breadcrumbs">
     <a href="/index.php">Главная</a>
-    <span class="sep">›</span>
-    <a href="/forum.php">Форум</a>
     <span class="sep">›</span>
     <a href="/section.php?id=<?= (int)$forum['id'] ?>"><?= escape($forum['title']) ?></a>
     <span class="sep">›</span>

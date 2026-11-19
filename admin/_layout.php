@@ -8,6 +8,7 @@ $adminMenu = [
     'general'   => ['⚙️ Основные настройки', '/admin/settings.php'],
     'structure' => ['🗂 Структура форума',   '/admin/structure.php'],
     'users'     => ['👥 Пользователи',       '/admin/users.php'],
+    'maintenance' => ['🧹 Обслуживание',     '/admin/maintenance.php'],
 ];
 
 function adminSidebar($active) {

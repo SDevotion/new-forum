@@ -18,6 +18,18 @@ $flashMessage = getFlashMessage();
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= isset($pageTitle) ? escape($pageTitle) . ' - ' : '' ?>Форум</title>
     <link rel="stylesheet" href="/assets/css/style.css">
+    <script>
+    window.FG_CONFIG = <?= json_encode([
+        'titleMin'    => setting('title_min', 5),
+        'titleMax'    => setting('title_max', 200),
+        'topicMin'    => setting('topic_min', 10),
+        'replyMin'    => setting('reply_min', 2),
+        'messageMax'  => setting('message_max', 20000),
+        'reportMin'   => setting('report_min', 5),
+        'reportMax'   => setting('report_max', 500),
+        'passwordMin' => setting('password_min', 6),
+    ]) ?>;
+    </script>
 </head>
 <body>
     <header class="header">
@@ -54,7 +66,7 @@ $flashMessage = getFlashMessage();
                 </nav>
                 
                 <form method="GET" action="/search.php" class="header-search">
-                    <input type="text" name="q" placeholder="Поиск..." maxlength="100" value="<?= escape($_GET['q'] ?? '') ?>">
+                    <input type="text" name="q" placeholder="Поиск..." maxlength="<?= setting('search_max', 100) ?>" value="<?= escape($_GET['q'] ?? '') ?>">
                     <button type="submit" title="Найти">🔍</button>
                 </form>
 

@@ -11,7 +11,7 @@ function canEdit($ownerId, $createdAt) {
     if (isModerator()) return true;
     if ((int)$u['id'] !== (int)$ownerId) return false;
 
-    $limit = 24 * 3600;
+    $limit = max(0, setting('edit_window_hours', 24)) * 3600;
     return (time() - strtotime($createdAt)) <= $limit;
 }
 

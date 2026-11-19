@@ -62,7 +62,7 @@ try {
                     ");
                     $st->execute([$topicId, $p['created_at'], $p['created_at'], $postId]);
                     $pos = (int)$st->fetchColumn();
-                    $url .= '&page=' . max(1, (int)ceil($pos / 15));
+                    $url .= '&page=' . max(1, (int)ceil($pos / max(1, setting('per_page_posts', 15))));
                     $url .= '#post-' . $postId;
                 }
             }

@@ -2,8 +2,8 @@
 require_once __DIR__ . '/../includes/editing.php';
 requireModerator();
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') redirect('/forum.php');
-if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) { setFlashMessage('error', 'Недействительный запрос'); redirect('/forum.php'); }
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') redirect('/index.php');
+if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) { setFlashMessage('error', 'Недействительный запрос'); redirect('/index.php'); }
 
 $db = Database::getInstance()->getConnection();
 $me = getCurrentUser();
@@ -13,18 +13,18 @@ $stmt = $db->prepare("SELECT * FROM post_edits WHERE id = ?");
 $stmt->execute([$revId]);
 $rev = $stmt->fetch();
 
-if (!$rev) { setFlashMessage('error', 'Версия не найдена'); redirect('/forum.php'); }
+if (!$rev) { setFlashMessage('error', 'Версия не найдена'); redirect('/index.php'); }
 
 $type = $rev['target_type'];
 $id = (int)$rev['target_id'];
-$backUrl = '/forum.php';
+$backUrl = '/index.php';
 
 try {
     if ($type === 'topic') {
         $stmt = $db->prepare("SELECT title, content FROM topics WHERE id = ?");
         $stmt->execute([$id]);
         $cur = $stmt->fetch();
-        if (!$cur) { setFlashMessage('error', 'Тема не найдена'); redirect('/forum.php'); }
+        if (!$cur) { setFlashMessage('error', 'Тема не найдена'); redirect('/index.php'); }
 
         $db->beginTransaction();
         saveRevision('topic', $id, $cur['title'], $cur['content'], 'Откат к версии #' . $revId);
@@ -37,7 +37,7 @@ try {
         $stmt = $db->prepare("SELECT content, topic_id FROM posts WHERE id = ?");
         $stmt->execute([$id]);
         $cur = $stmt->fetch();
-        if (!$cur) { setFlashMessage('error', 'Сообщение не найдено'); redirect('/forum.php'); }
+        if (!$cur) { setFlashMessage('error', 'Сообщение не найдено'); redirect('/index.php'); }
 
         $db->beginTransaction();
         saveRevision('post', $id, null, $cur['content'], 'Откат к версии #' . $revId);

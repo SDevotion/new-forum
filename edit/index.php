@@ -34,7 +34,7 @@ if ($type === 'topic') {
 }
 $obj = $stmt->fetch();
 
-if (!$obj) { setFlashMessage('error', 'Объект не найден'); redirect('/forum.php'); }
+if (!$obj) { setFlashMessage('error', 'Объект не найден'); redirect('/index.php'); }
 
 $backUrl = $type === 'topic'
     ? '/topic.php?id=' . $id
@@ -142,7 +142,6 @@ require_once __DIR__ . '/../includes/header.php';
 
 <nav class="breadcrumbs">
     <a href="/index.php">Главная</a><span class="sep">›</span>
-    <a href="/forum.php">Форум</a><span class="sep">›</span>
     <a href="<?= escape($backUrl) ?>">Назад к теме</a><span class="sep">›</span>
     <span class="current">Редактирование</span>
 </nav>

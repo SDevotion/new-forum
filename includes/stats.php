@@ -49,19 +49,24 @@ function getOnlineList() {
         LIMIT 100
     ")->fetchAll();
 
-    // Гости — приблизительно, по свежим файлам сессий
-    $guests = 0;
-    $sessDir = session_save_path() ?: sys_get_temp_dir();
-    if (is_dir($sessDir) && is_readable($sessDir)) {
-        $files = @glob($sessDir . '/sess_*');
-        if ($files) {
-            $cut = time() - ONLINE_WINDOW;
-            foreach ($files as $f) {
-                if (@filemtime($f) >= $cut) $guests++;
+    // Гости — приблизительно, по свежим файлам сессий (только файловый обработчик; кэш на запрос)
+    static $guestFiles = null;
+    if ($guestFiles === null) {
+        $guestFiles = 0;
+        if (ini_get('session.save_handler') === 'files') {
+            $sessDir = session_save_path() ?: sys_get_temp_dir();
+            if (is_dir($sessDir) && is_readable($sessDir)) {
+                $files = @glob($sessDir . '/sess_*');
+                if ($files) {
+                    $cut = time() - ONLINE_WINDOW;
+                    foreach ($files as $f) {
+                        if (@filemtime($f) >= $cut) $guestFiles++;
+                    }
+                }
             }
         }
-        $guests = max(0, $guests - count($users));
     }
+    $guests = max(0, $guestFiles - count($users));
 
     return ['users' => $users, 'count' => count($users), 'guests' => $guests];
 }

@@ -32,7 +32,6 @@ $flashMessage = getFlashMessage();
                 
                 <nav class="nav">
                     <a href="/index.php" class="nav-link">Главная</a>
-                    <a href="/forum.php" class="nav-link">Форум</a>
                     <a href="/members.php" class="nav-link">Участники</a>
                     <a href="/stats.php" class="nav-link">Статистика</a>
                     <a href="/search.php" class="nav-link">Поиск</a>

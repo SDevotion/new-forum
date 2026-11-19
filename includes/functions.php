@@ -32,6 +32,7 @@ function getCurrentUser() {
         
         // Если пользователь не найден или заблокирован - разлогиниваем
         if (!$user) {
+            $_SESSION = [];
             session_destroy();
             header('Location: /index.php');
             exit;

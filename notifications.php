@@ -12,7 +12,7 @@ $uid = (int)$_SESSION['user_id'];
 $filter = $_GET['filter'] ?? 'all';
 if (!in_array($filter, ['all', 'unread'], true)) $filter = 'all';
 
-$perPage = 25;
+$perPage = max(1, setting('per_page_notifications', 15));
 $page = max(1, (int)($_GET['page'] ?? 1));
 $offset = ($page - 1) * $perPage;
 

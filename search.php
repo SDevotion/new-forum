@@ -22,7 +22,7 @@ if (!in_array($scope, ['all', 'topics', 'posts'], true)) $scope = 'all';
 if (!in_array($sort, ['relevance', 'new', 'old'], true)) $sort = 'relevance';
 if (!in_array($period, ['any', 'week', 'month', 'year'], true)) $period = 'any';
 
-$perPage = 20;
+$perPage = max(1, setting('per_page_search', 15));
 $page = max(1, (int)($_GET['page'] ?? 1));
 $offset = ($page - 1) * $perPage;
 
@@ -46,10 +46,13 @@ if ($author !== '') {
     $authorId = (int)$st->fetchColumn();
 }
 
-if (mb_strlen($q) > 0 && mb_strlen($q) < 2) {
-    $error = 'Запрос слишком короткий. Минимум 2 символа.';
-} elseif (mb_strlen($q) > 100) {
-    $error = 'Запрос слишком длинный. Максимум 100 символов.';
+$searchMin = setting('search_min', 2);
+$searchMax = setting('search_max', 100);
+
+if (mb_strlen($q) > 0 && mb_strlen($q) < $searchMin) {
+    $error = "Запрос слишком короткий. Минимум $searchMin символа.";
+} elseif (mb_strlen($q) > $searchMax) {
+    $error = "Запрос слишком длинный. Максимум $searchMax символов.";
 } elseif ($ft !== '') {
 
     $hiddenT = $staff ? '' : ' AND t.is_hidden = 0';
@@ -133,7 +136,7 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < 2) {
         }
 
         // Лог поиска — только первая страница
-        if ($page === 1 && mb_strlen($q) >= 2) {
+        if ($page === 1 && mb_strlen($q) >= $searchMin) {
             try {
                 $db->prepare("INSERT INTO search_log (user_id, query, results) VALUES (?,?,?)")
                    ->execute([$me ? $me['id'] : null, mb_substr($q, 0, 200), $total]);
@@ -176,7 +179,7 @@ require_once __DIR__ . '/includes/header.php';
 <form method="GET" action="/search.php" class="search-panel">
     <div class="search-main">
         <input type="text" name="q" class="form-control search-input" value="<?= escape($q) ?>"
-               placeholder="Что ищем? Можно фразу в кавычках" maxlength="100" autofocus>
+               placeholder="Что ищем? Можно фразу в кавычках" maxlength="<?= setting('search_max', 100) ?>" autofocus>
         <button class="btn btn-primary">Найти</button>
     </div>
 

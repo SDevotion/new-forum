@@ -49,7 +49,7 @@ $currentUser = getCurrentUser();
 
 // Пагинация ответов
 require_once __DIR__ . '/includes/pagination.php';
-$perPage = 15;
+$perPage = max(1, setting('per_page_posts', 15));
 $page = max(1, (int)($_GET['page'] ?? 1));
 
 $stmt = $db->prepare("SELECT COUNT(*) FROM posts WHERE topic_id = ? AND (is_hidden = 0 OR ? = 1)");
@@ -314,7 +314,7 @@ require_once __DIR__ . '/includes/header.php';
                 $mdRows = 6; $mdRequired = true;
                 require __DIR__ . '/includes/md_editor.php';
                 ?>
-                <small class="form-hint">Символов: <span id="replyCharCount">0</span> / 20000</small>
+                <small class="form-hint">Символов: <span id="replyCharCount">0</span> / <?= setting('message_max', 20000) ?></small>
             </div>
 
             <div class="form-group">
@@ -348,9 +348,9 @@ require_once __DIR__ . '/includes/header.php';
             <input type="hidden" name="back" value="<?= escape($backUrl) ?>">
             <div class="form-group">
                 <label for="reportReason">Причина жалобы</label>
-                <textarea id="reportReason" name="reason" class="form-control" rows="4" maxlength="500"
+                <textarea id="reportReason" name="reason" class="form-control" rows="4" maxlength="<?= setting('report_max', 500) ?>"
                           placeholder="Спам, оскорбления, нарушение правил..." required></textarea>
-                <small class="form-hint">От 5 до 500 символов</small>
+                <small class="form-hint">От <?= setting('report_min', 5) ?> до <?= setting('report_max', 500) ?> символов</small>
             </div>
             <div class="form-actions">
                 <button type="submit" class="btn btn-primary">Отправить</button>

@@ -27,7 +27,7 @@ $pageTitle = $forum['title'];
 
 // Пагинация
 require_once __DIR__ . '/includes/pagination.php';
-$perPage = 20;
+$perPage = max(1, setting('per_page_topics', 15));
 $page = max(1, (int)($_GET['page'] ?? 1));
 $offset = ($page - 1) * $perPage;
 

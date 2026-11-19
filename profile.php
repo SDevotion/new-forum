@@ -40,7 +40,7 @@ $roles = ['user' => 'Участник', 'moderator' => 'Модератор', 'ad
 
 // Вкладка
 $tab = ($_GET['tab'] ?? 'topics') === 'posts' ? 'posts' : 'topics';
-$perPage = 15;
+$perPage = max(1, setting('per_page_posts', 15));
 $page = max(1, (int)($_GET['page'] ?? 1));
 $offset = ($page - 1) * $perPage;
 

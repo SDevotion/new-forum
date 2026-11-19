@@ -12,7 +12,7 @@ $sort = $_GET['sort'] ?? 'posts';
 if (!in_array($sort, ['posts', 'topics', 'new', 'name'], true)) $sort = 'posts';
 $q = trim($_GET['q'] ?? '');
 
-$perPage = 30;
+$perPage = max(1, setting('per_page_members', 15));
 $page = max(1, (int)($_GET['page'] ?? 1));
 $offset = ($page - 1) * $perPage;
 

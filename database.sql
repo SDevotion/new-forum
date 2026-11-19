@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Хост: localhost
--- Время создания: Ноя 19 2026 г., 10:34
+-- Время создания: Ноя 19 2026 г., 20:29
 -- Версия сервера: 8.4.11-11
 -- Версия PHP: 8.3.36
 
@@ -282,6 +282,20 @@ CREATE TABLE `search_log` (
 -- --------------------------------------------------------
 
 --
+-- Структура таблицы `settings`
+--
+
+CREATE TABLE `settings` (
+  `key` varchar(64) NOT NULL,
+  `value` text NOT NULL,
+  `type` enum('int','string','text','bool','json') NOT NULL DEFAULT 'string',
+  `group` varchar(32) NOT NULL DEFAULT 'general',
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Структура таблицы `topics`
 --
 
@@ -509,6 +523,12 @@ ALTER TABLE `search_log`
   ADD KEY `user_id` (`user_id`),
   ADD KEY `idx_query` (`query`),
   ADD KEY `idx_created` (`created_at`);
+
+--
+-- Индексы таблицы `settings`
+--
+ALTER TABLE `settings`
+  ADD PRIMARY KEY (`key`);
 
 --
 -- Индексы таблицы `topics`

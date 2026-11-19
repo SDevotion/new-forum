@@ -13,6 +13,11 @@ if (!isLoggedIn()) {
     redirect('/auth/login.php');
 }
 
+if (setting('forum_closed', false) && !isModerator()) {
+    setFlashMessage('error', setting('forum_closed_message', 'Форум временно закрыт для новых сообщений'));
+    redirect($backUrl);
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     redirect($backUrl);
 }

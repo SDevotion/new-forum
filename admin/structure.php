@@ -1,6 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/permissions.php';
-requireAdmin();
+require_once __DIR__ . '/_layout.php';
 
 $pageTitle = 'Структура форума';
 $db = Database::getInstance()->getConnection();
@@ -99,6 +99,7 @@ $categories = $db->query("SELECT * FROM categories ORDER BY sort_order, id")->fe
 $forumsStmt = $db->prepare("SELECT * FROM forums WHERE category_id = ? ORDER BY sort_order, id");
 
 require_once __DIR__ . '/../includes/header.php';
+adminOpen('structure');
 ?>
 
 <nav class="breadcrumbs">
@@ -203,4 +204,7 @@ require_once __DIR__ . '/../includes/header.php';
     </div>
 <?php endforeach; ?>
 
-<?php require_once __DIR__ . '/../includes/footer.php'; ?>
+<?php
+adminClose();
+require_once __DIR__ . '/../includes/footer.php';
+?>

@@ -1,6 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/permissions.php';
-requireAdmin();
+require_once __DIR__ . '/_layout.php';
 
 $pageTitle = 'Управление пользователями';
 $db = Database::getInstance()->getConnection();
@@ -33,6 +33,7 @@ $roles = ['user' => 'Участник', 'moderator' => 'Модератор', 'ad
 $queryBase = '/admin/users.php?q=' . urlencode($q) . '&role=' . urlencode($roleFilter);
 
 require_once __DIR__ . '/../includes/header.php';
+adminOpen('users');
 ?>
 
 <nav class="breadcrumbs">
@@ -111,4 +112,7 @@ require_once __DIR__ . '/../includes/header.php';
 </div>
 
 <?php renderPagination($page, $totalPages, $queryBase); ?>
-<?php require_once __DIR__ . '/../includes/footer.php'; ?>
+<?php
+adminClose();
+require_once __DIR__ . '/../includes/footer.php';
+?>

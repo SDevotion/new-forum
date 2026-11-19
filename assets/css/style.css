@@ -1902,3 +1902,9 @@ h3.md-h{font-size:19px}h4.md-h{font-size:17px}h5.md-h{font-size:15px}h6.md-h{fon
 /* ===== Admin uploads types ===== */
 .admin-types { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 2px 12px; margin-bottom: 8px; }
 .admin-type-item { padding: 4px 0; }
+
+/* ===== Admin maintenance ===== */
+.admin-clean-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px dashed var(--border, #e5e7eb); font-size: 14px; }
+.admin-clean-row:last-child { border-bottom: 0; }
+.admin-log-filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+.admin-log-filters select { width: auto; max-width: 220px; }

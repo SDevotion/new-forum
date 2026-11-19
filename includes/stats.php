@@ -4,7 +4,7 @@
  */
 require_once __DIR__ . '/functions.php';
 
-if (!defined('ONLINE_WINDOW')) define('ONLINE_WINDOW', 900); // 15 минут
+if (!defined('ONLINE_WINDOW')) define('ONLINE_WINDOW', max(60, setting('online_window', 900)));
 
 /**
  * Отметка активности авторизованного пользователя.

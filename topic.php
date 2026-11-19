@@ -82,7 +82,8 @@ $allForums = $isStaff ? $db->query("SELECT id, title FROM forums WHERE is_active
 $backUrl = '/topic.php?id=' . $topicId . '&page=' . $page;
 
 $roles = ['user' => 'Участник', 'moderator' => 'Модератор', 'admin' => 'Администратор'];
-$canReply = isLoggedIn() && !$topic['is_closed'] && !$topic['is_hidden'];
+$forumClosed = setting('forum_closed', false) && !isModerator();
+$canReply = isLoggedIn() && !$topic['is_closed'] && !$topic['is_hidden'] && !$forumClosed;
 $subscribed = isSubscribed($topicId);
 
 require_once __DIR__ . '/includes/header.php';
@@ -328,8 +329,10 @@ require_once __DIR__ . '/includes/header.php';
     </div>
 <?php elseif (!isLoggedIn()): ?>
     <div class="reply-notice">
-        <a href="/auth/login.php">Войдите</a> или <a href="/auth/register.php">зарегистрируйтесь</a>, чтобы участвовать в обсуждении.
+        <a href="/auth/login.php">Войдите</a><?php if (setting('registration_enabled', true)): ?> или <a href="/auth/register.php">зарегистрируйтесь</a><?php endif; ?>, чтобы участвовать в обсуждении.
     </div>
+<?php elseif ($forumClosed): ?>
+    <div class="reply-notice">🔒 <?= escape(setting('forum_closed_message', 'Форум временно закрыт для новых сообщений')) ?></div>
 <?php else: ?>
     <div class="reply-notice">🔒 Тема закрыта. Новые ответы недоступны.</div>
 <?php endif; ?>

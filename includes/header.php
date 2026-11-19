@@ -42,6 +42,9 @@ $flashMessage = getFlashMessage();
                         </a>
                         <a href="/profile.php?id=<?= (int)$currentUser['id'] ?>" class="nav-link">Профиль</a>
                     <?php endif; ?>
+                    <?php if (isAdmin()): ?>
+                        <a href="/admin/index.php" class="nav-link nav-link-mod">Админка</a>
+                    <?php endif; ?>
                     <?php if (isModerator()): ?>
                         <a href="/moderation/index.php" class="nav-link nav-link-mod">
                             Модерация
@@ -68,7 +71,9 @@ $flashMessage = getFlashMessage();
                         </form>
                     <?php else: ?>
                         <a href="/auth/login.php" class="btn btn-outline">Войти</a>
-                        <a href="/auth/register.php" class="btn btn-primary">Регистрация</a>
+                        <?php if (setting('registration_enabled', true)): ?>
+                            <a href="/auth/register.php" class="btn btn-primary">Регистрация</a>
+                        <?php endif; ?>
                     <?php endif; ?>
                 </div>
             </div>

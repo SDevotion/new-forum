@@ -12,15 +12,9 @@
                     <h4>Навигация</h4>
                     <ul>
                         <li><a href="/index.php">Главная</a></li>
-                        <li><a href="/about.php">О форуме</a></li>
-                        <li><a href="/rules.php">Правила</a></li>
-                    </ul>
-                </div>
-                <div class="footer-section">
-                    <h4>Поддержка</h4>
-                    <ul>
-                        <li><a href="/help.php">Помощь</a></li>
-                        <li><a href="/contact.php">Контакты</a></li>
+                        <li><a href="/members.php">Участники</a></li>
+                        <li><a href="/stats.php">Статистика</a></li>
+                        <li><a href="/search.php">Поиск</a></li>
                     </ul>
                 </div>
             </div>

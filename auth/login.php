@@ -102,7 +102,7 @@ require_once __DIR__ . '/../includes/header.php';
         </form>
         
         <div class="auth-footer">
-            Нет аккаунта? <a href="/auth/register.php">Зарегистрироваться</a>
+            <?php if (setting('registration_enabled', true)): ?>Нет аккаунта? <a href="/auth/register.php">Зарегистрироваться</a><?php endif; ?>
         </div>
     </div>
 </div>

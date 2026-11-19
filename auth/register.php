@@ -2,6 +2,11 @@
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/ratelimit.php';
 
+if (!setting('registration_enabled', true)) {
+    setFlashMessage('error', 'Регистрация новых участников временно отключена');
+    redirect('/auth/login.php');
+}
+
 $pageTitle = 'Регистрация';
 $errors = [];
 $username = '';

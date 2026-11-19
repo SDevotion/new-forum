@@ -12,7 +12,7 @@ $db = Database::getInstance()->getConnection();
 $stmt = $db->prepare("
     SELECT username, avatar FROM users
     WHERE is_active = 1 AND username LIKE ?
-    ORDER BY posts_total DESC LIMIT 8
+    ORDER BY posts_total DESC LIMIT " . max(1, setting('per_page_autocomplete', 5)) . "
 ");
 $stmt->execute([$q . '%']);
 $rows = $stmt->fetchAll();

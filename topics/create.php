@@ -48,16 +48,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $title = trim($_POST['title'] ?? '');
         $content = trim($_POST['content'] ?? '');
 
-        if (mb_strlen($title) < 5) {
-            $errors[] = 'Заголовок должен содержать минимум 5 символов';
-        } elseif (mb_strlen($title) > 200) {
-            $errors[] = 'Заголовок не должен превышать 200 символов';
+        $titleMin = setting('title_min', 5);
+        $titleMax = setting('title_max', 200);
+        $topicMin = setting('topic_min', 10);
+        $msgMax   = setting('message_max', 20000);
+
+        if (mb_strlen($title) < $titleMin) {
+            $errors[] = "Заголовок должен содержать минимум $titleMin символов";
+        } elseif (mb_strlen($title) > $titleMax) {
+            $errors[] = "Заголовок не должен превышать $titleMax символов";
         }
 
-        if (mb_strlen($content) < 10) {
-            $errors[] = 'Сообщение должно содержать минимум 10 символов';
-        } elseif (mb_strlen($content) > 20000) {
-            $errors[] = 'Сообщение слишком длинное (максимум 20000 символов)';
+        if (mb_strlen($content) < $topicMin) {
+            $errors[] = "Сообщение должно содержать минимум $topicMin символов";
+        } elseif (mb_strlen($content) > $msgMax) {
+            $errors[] = "Сообщение слишком длинное (максимум $msgMax символов)";
         }
 
         $attachFiles = attachNormalizeFiles();
@@ -137,9 +142,9 @@ require_once __DIR__ . '/../includes/header.php';
                    class="form-control"
                    value="<?= escape($title) ?>"
                    placeholder="Кратко и по сути"
-                   maxlength="200"
+                   maxlength="<?= setting('title_max', 200) ?>"
                    required>
-            <small class="form-hint">От 5 до 200 символов</small>
+            <small class="form-hint">От <?= setting('title_min', 5) ?> до <?= setting('title_max', 200) ?> символов</small>
         </div>
 
         <div class="form-group">
@@ -149,7 +154,7 @@ require_once __DIR__ . '/../includes/header.php';
             $mdRows = 10; $mdRequired = true;
             require __DIR__ . '/../includes/md_editor.php';
             ?>
-            <small class="form-hint">Минимум 10 символов. Символов: <span id="charCount">0</span></small>
+            <small class="form-hint">Минимум <?= setting('topic_min', 10) ?> символов. Символов: <span id="charCount">0</span> / <?= setting('message_max', 20000) ?></small>
         </div>
 
         <div class="form-group">

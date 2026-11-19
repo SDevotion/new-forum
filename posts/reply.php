@@ -71,8 +71,8 @@ if (mb_strlen($content) > $msgMax) {
 }
 
 // Ограничение частоты ответов (антифлуд)
-if (!rateLimitCheck('post_reply', 10, 300)) {
-    setFlashMessage('error', 'Слишком много сообщений подряд. Подождите ' . ceil(rateLimitRetryAfter('post_reply', 300) / 60) . ' мин.');
+if (!rateLimitCheck('post_reply', max(1, setting('rl_reply_max', 10)), max(60, setting('rl_reply_window', 300)))) {
+    setFlashMessage('error', 'Слишком много сообщений подряд. Подождите ' . ceil(rateLimitRetryAfter('post_reply', max(60, setting('rl_reply_window', 300))) / 60) . ' мин.');
     redirect($backUrl);
 }
 

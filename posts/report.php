@@ -17,7 +17,7 @@ $reportMin = setting('report_min', 5);
 $reportMax = setting('report_max', 500);
 if (mb_strlen($reason) < $reportMin) { setFlashMessage('error', "Опишите причину жалобы (минимум $reportMin символов)"); redirect($back); }
 if (mb_strlen($reason) > $reportMax) { setFlashMessage('error', "Причина слишком длинная (максимум $reportMax символов)"); redirect($back); }
-if (!rateLimitCheck('report', 5, 3600)) { setFlashMessage('error', 'Слишком много жалоб за последнее время. Попробуйте позже.'); redirect($back); }
+if (!rateLimitCheck('report', max(1, setting('rl_report_max', 5)), max(60, setting('rl_report_window', 3600)))) { setFlashMessage('error', 'Слишком много жалоб за последнее время. Попробуйте позже.'); redirect($back); }
 
 $db = Database::getInstance()->getConnection();
 $u = getCurrentUser();

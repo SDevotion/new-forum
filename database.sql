@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Хост: localhost
--- Время создания: Ноя 18 2026 г., 23:18
+-- Время создания: Ноя 19 2026 г., 10:34
 -- Версия сервера: 8.4.11-11
 -- Версия PHP: 8.3.36
 
@@ -20,6 +20,26 @@ SET time_zone = "+00:00";
 --
 -- База данных: `kamikaze_lnf`
 --
+
+-- --------------------------------------------------------
+
+--
+-- Структура таблицы `attachments`
+--
+
+CREATE TABLE `attachments` (
+  `id` int NOT NULL,
+  `target_type` enum('topic','post') NOT NULL,
+  `target_id` int NOT NULL,
+  `user_id` int NOT NULL,
+  `orig_name` varchar(255) NOT NULL,
+  `stored_name` varchar(64) NOT NULL,
+  `mime` varchar(100) NOT NULL,
+  `size_bytes` int NOT NULL,
+  `is_image` tinyint(1) DEFAULT '0',
+  `downloads` int DEFAULT '0',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
 
@@ -216,6 +236,20 @@ CREATE TABLE `post_edits` (
 -- --------------------------------------------------------
 
 --
+-- Структура таблицы `rate_limits`
+--
+
+CREATE TABLE `rate_limits` (
+  `id` int NOT NULL,
+  `action` varchar(30) NOT NULL,
+  `actor_key` varchar(50) NOT NULL,
+  `ip_address` varchar(45) DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Структура таблицы `reports`
 --
 
@@ -382,6 +416,15 @@ CREATE TABLE `user_sessions` (
 --
 
 --
+-- Индексы таблицы `attachments`
+--
+ALTER TABLE `attachments`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uniq_stored` (`stored_name`),
+  ADD KEY `idx_target` (`target_type`,`target_id`),
+  ADD KEY `user_id` (`user_id`);
+
+--
 -- Индексы таблицы `categories`
 --
 ALTER TABLE `categories`
@@ -439,6 +482,13 @@ ALTER TABLE `post_edits`
   ADD PRIMARY KEY (`id`),
   ADD KEY `editor_id` (`editor_id`),
   ADD KEY `idx_target` (`target_type`,`target_id`,`created_at`);
+
+--
+-- Индексы таблицы `rate_limits`
+--
+ALTER TABLE `rate_limits`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_action_actor_time` (`action`,`actor_key`,`created_at`);
 
 --
 -- Индексы таблицы `reports`
@@ -500,6 +550,12 @@ ALTER TABLE `user_sessions`
 --
 
 --
+-- AUTO_INCREMENT для таблицы `attachments`
+--
+ALTER TABLE `attachments`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT для таблицы `categories`
 --
 ALTER TABLE `categories`
@@ -536,6 +592,12 @@ ALTER TABLE `post_edits`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT для таблицы `rate_limits`
+--
+ALTER TABLE `rate_limits`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT для таблицы `reports`
 --
 ALTER TABLE `reports`
@@ -568,6 +630,12 @@ ALTER TABLE `user_sessions`
 --
 -- Ограничения внешнего ключа сохраненных таблиц
 --
+
+--
+-- Ограничения внешнего ключа таблицы `attachments`
+--
+ALTER TABLE `attachments`
+  ADD CONSTRAINT `attachments_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 
 --
 -- Ограничения внешнего ключа таблицы `forums`

@@ -34,6 +34,23 @@ function settingsDefaults() {
             'per_page_notifications' => ['int', 15, 'pagination'],
             'per_page_autocomplete'  => ['int', 5,  'pagination'],
             'per_page_staff'         => ['int', 15, 'pagination'],
+            // uploads
+            'attach_max_files'   => ['int', 5, 'uploads'],
+            'attach_max_size_mb' => ['int', 5, 'uploads'],
+            'attach_types'       => ['json', ['jpg','png','gif','webp','pdf','txt','zip','doc','docx','xls','xlsx','mp3','mp4'], 'uploads'],
+            'avatar_max_size_mb' => ['int', 2, 'uploads'],
+            // limits
+            'rl_login_max'      => ['int', 5,    'limits'],
+            'rl_login_window'   => ['int', 900,  'limits'],
+            'rl_register_max'   => ['int', 3,    'limits'],
+            'rl_register_window'=> ['int', 3600, 'limits'],
+            'rl_topic_max'      => ['int', 5,    'limits'],
+            'rl_topic_window'   => ['int', 600,  'limits'],
+            'rl_reply_max'      => ['int', 10,   'limits'],
+            'rl_reply_window'   => ['int', 300,  'limits'],
+            'rl_report_max'     => ['int', 5,    'limits'],
+            'rl_report_window'  => ['int', 3600, 'limits'],
+            'online_window'     => ['int', 900,  'limits'],
         ];
     }
     return $defaults;
@@ -109,7 +126,9 @@ function settingsSet(array $kv) {
         elseif ($type === 'json') $value = json_encode($value, JSON_UNESCAPED_UNICODE);
         else $value = (string)$value;
 
-        $oldNorm = $type === 'bool' ? ((int)$old[$key] ? '1' : '0') : (string)$old[$key];
+        if ($type === 'bool') $oldNorm = (int)$old[$key] ? '1' : '0';
+        elseif ($type === 'json') $oldNorm = json_encode($old[$key], JSON_UNESCAPED_UNICODE);
+        else $oldNorm = (string)$old[$key];
         if ($oldNorm === $value) continue;
         $stmt->execute([$key, $value, $type, $group]);
         $changed[] = $key;

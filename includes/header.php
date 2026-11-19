@@ -28,6 +28,7 @@ $flashMessage = getFlashMessage();
         'reportMin'   => setting('report_min', 5),
         'reportMax'   => setting('report_max', 500),
         'passwordMin' => setting('password_min', 6),
+        'avatarMaxMb' => max(1, setting('avatar_max_size_mb', 2)),
     ]) ?>;
     </script>
 </head>

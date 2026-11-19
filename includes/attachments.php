@@ -5,31 +5,70 @@
 require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/permissions.php';
 
-define('ATTACH_MAX_FILES', 5);              // максимум файлов на одно сообщение
-define('ATTACH_MAX_SIZE', 5 * 1024 * 1024); // 5 МБ на файл
 define('ATTACH_DIR', __DIR__ . '/../assets/uploads/attachments');
 define('ATTACH_URL_BASE', '/attachment.php?id=');
 
+function attachMaxFiles() { return max(0, setting('attach_max_files', 5)); }
+function attachMaxSize()  { return max(1, setting('attach_max_size_mb', 5)) * 1024 * 1024; }
+
 /**
- * Whitelist: реальный MIME (finfo) -> расширение. SVG/HTML/PHP сознательно запрещены.
+ * Полный каталог типов: группа => [mime..., расширения для accept, подпись].
+ * SVG/HTML/PHP сознательно отсутствуют.
+ */
+function attachTypeCatalog() {
+    return [
+        'jpg'  => [['image/jpeg'], '.jpg,.jpeg', 'JPG'],
+        'png'  => [['image/png'], '.png', 'PNG'],
+        'gif'  => [['image/gif'], '.gif', 'GIF'],
+        'webp' => [['image/webp'], '.webp', 'WEBP'],
+        'pdf'  => [['application/pdf'], '.pdf', 'PDF'],
+        'txt'  => [['text/plain'], '.txt', 'TXT'],
+        'zip'  => [['application/zip', 'application/x-zip-compressed'], '.zip', 'ZIP'],
+        'doc'  => [['application/msword'], '.doc', 'DOC'],
+        'docx' => [['application/vnd.openxmlformats-officedocument.wordprocessingml.document'], '.docx', 'DOCX'],
+        'xls'  => [['application/vnd.ms-excel'], '.xls', 'XLS'],
+        'xlsx' => [['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'], '.xlsx', 'XLSX'],
+        'mp3'  => [['audio/mpeg'], '.mp3', 'MP3'],
+        'mp4'  => [['video/mp4'], '.mp4', 'MP4'],
+    ];
+}
+
+/**
+ * Разрешённые группы типов (настройка attach_types). Пустой список = все запрещены.
+ */
+function attachEnabledGroups() {
+    $enabled = setting('attach_types', array_keys(attachTypeCatalog()));
+    if (!is_array($enabled)) $enabled = [];
+    return array_values(array_intersect(array_keys(attachTypeCatalog()), $enabled));
+}
+
+/**
+ * Whitelist: реальный MIME (finfo) -> расширение, с учётом настройки.
  */
 function attachAllowedTypes() {
-    return [
-        'image/jpeg'      => 'jpg',
-        'image/png'       => 'png',
-        'image/gif'       => 'gif',
-        'image/webp'      => 'webp',
-        'application/pdf' => 'pdf',
-        'text/plain'      => 'txt',
-        'application/zip' => 'zip',
-        'application/x-zip-compressed' => 'zip',
-        'application/msword' => 'doc',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
-        'application/vnd.ms-excel' => 'xls',
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => 'xlsx',
-        'audio/mpeg'      => 'mp3',
-        'video/mp4'       => 'mp4',
-    ];
+    $map = [];
+    $catalog = attachTypeCatalog();
+    foreach (attachEnabledGroups() as $group) {
+        foreach ($catalog[$group][0] as $mime) $map[$mime] = $group;
+    }
+    return $map;
+}
+
+/**
+ * accept-атрибут и человекочитаемая подпись — из того же каталога.
+ */
+function attachAcceptAttr() {
+    $parts = [];
+    $catalog = attachTypeCatalog();
+    foreach (attachEnabledGroups() as $g) $parts[] = $catalog[$g][1];
+    return implode(',', $parts);
+}
+
+function attachTypesLabel() {
+    $parts = [];
+    $catalog = attachTypeCatalog();
+    foreach (attachEnabledGroups() as $g) $parts[] = $catalog[$g][2];
+    return $parts ? implode(', ', $parts) : 'загрузка отключена';
 }
 
 function attachIsImageMime($mime) {
@@ -68,8 +107,13 @@ function attachNormalizeFiles($field = 'attachments') {
  */
 function attachValidate(array &$files) {
     $errors = [];
-    if (count($files) > ATTACH_MAX_FILES) {
-        $errors[] = 'Можно прикрепить не более ' . ATTACH_MAX_FILES . ' файлов';
+    $maxFiles = attachMaxFiles();
+    if ($files && $maxFiles === 0) {
+        $errors[] = 'Загрузка вложений отключена администратором';
+        return $errors;
+    }
+    if (count($files) > $maxFiles) {
+        $errors[] = 'Можно прикрепить не более ' . $maxFiles . ' файлов';
         return $errors;
     }
     $allowed = attachAllowedTypes();
@@ -81,8 +125,9 @@ function attachValidate(array &$files) {
             $errors[] = '«' . $label . '»: ошибка загрузки (код ' . (int)$f['error'] . ')';
             continue;
         }
-        if ($f['size'] <= 0 || $f['size'] > ATTACH_MAX_SIZE) {
-            $errors[] = '«' . $label . '»: размер должен быть от 1 байта до ' . (int)(ATTACH_MAX_SIZE / 1024 / 1024) . ' МБ';
+        $maxSize = attachMaxSize();
+        if ($f['size'] <= 0 || $f['size'] > $maxSize) {
+            $errors[] = '«' . $label . '»: размер должен быть от 1 байта до ' . (int)($maxSize / 1024 / 1024) . ' МБ';
             continue;
         }
         if (!is_uploaded_file($f['tmp_name'])) {

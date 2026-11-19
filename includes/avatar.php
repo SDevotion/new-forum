@@ -22,8 +22,9 @@ function handleAvatarUpload($file, $userId) {
         return [false, 'Ошибка загрузки файла (код ' . (int)$file['error'] . ')', null];
     }
 
-    if ($file['size'] > 2 * 1024 * 1024) {
-        return [false, 'Файл слишком большой. Максимум 2 МБ', null];
+    $avatarMaxMb = max(1, setting('avatar_max_size_mb', 2));
+    if ($file['size'] > $avatarMaxMb * 1024 * 1024) {
+        return [false, 'Файл слишком большой. Максимум ' . $avatarMaxMb . ' МБ', null];
     }
 
     if (!is_uploaded_file($file['tmp_name'])) {

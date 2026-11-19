@@ -4,8 +4,9 @@
  * Форма-родитель обязана иметь enctype="multipart/form-data".
  */
 $attachExisting = $attachExisting ?? [];
+if (attachMaxFiles() === 0 && !$attachExisting) return; // загрузка отключена
 ?>
-<div class="attach-upload" data-max-files="<?= ATTACH_MAX_FILES ?>" data-max-size="<?= ATTACH_MAX_SIZE ?>">
+<div class="attach-upload" data-max-files="<?= attachMaxFiles() ?>" data-max-size="<?= attachMaxSize() ?>">
     <label class="attach-upload-label">📎 Вложения</label>
     <?php if ($attachExisting): ?>
         <div class="attach-existing">
@@ -20,7 +21,7 @@ $attachExisting = $attachExisting ?? [];
         </div>
     <?php endif; ?>
     <input type="file" name="attachments[]" class="attach-input" multiple
-           accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.txt,.zip,.doc,.docx,.xls,.xlsx,.mp3,.mp4">
+           accept="<?= escape(attachAcceptAttr()) ?>">
     <div class="attach-selected"></div>
-    <small class="form-hint">До <?= ATTACH_MAX_FILES ?> файлов, каждый до <?= (int)(ATTACH_MAX_SIZE / 1024 / 1024) ?> МБ. Изображения, PDF, TXT, ZIP, Office, MP3, MP4.</small>
+    <small class="form-hint">До <?= attachMaxFiles() ?> файлов, каждый до <?= (int)(attachMaxSize() / 1024 / 1024) ?> МБ. <?= escape(attachTypesLabel()) ?>.</small>
 </div>

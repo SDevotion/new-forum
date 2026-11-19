@@ -20,7 +20,7 @@ $reports = $db->query("
     JOIN users u ON u.id = r.user_id
     LEFT JOIN users h ON h.id = r.handled_by
     ORDER BY FIELD(r.status,'new','resolved','rejected'), r.created_at DESC
-    LIMIT 50
+    LIMIT " . max(1, setting('per_page_staff', 15)) . "
 ")->fetchAll();
 
 foreach ($reports as &$r) {
@@ -39,7 +39,7 @@ $log = $db->query("
     FROM moderation_log l
     JOIN users u ON u.id = l.user_id
     ORDER BY l.created_at DESC, l.id DESC
-    LIMIT 30
+    LIMIT " . max(1, setting('per_page_staff', 15)) . "
 ")->fetchAll();
 
 $actionNames = [

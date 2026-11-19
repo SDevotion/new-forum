@@ -39,8 +39,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         if (empty($password)) {
             $errors[] = 'Введите пароль';
-        } elseif (strlen($password) < 6) {
-            $errors[] = 'Пароль должен содержать минимум 6 символов';
+        } elseif (strlen($password) < setting('password_min', 6)) {
+            $errors[] = 'Пароль должен содержать минимум ' . setting('password_min', 6) . ' символов';
         }
         
         if ($password !== $passwordConfirm) {
@@ -128,7 +128,8 @@ require_once __DIR__ . '/../includes/header.php';
                        id="password" 
                        name="password" 
                        class="form-control" 
-                       placeholder="Минимум 6 символов"
+                       placeholder="Минимум <?= setting('password_min', 6) ?> символов"
+                       minlength="<?= setting('password_min', 6) ?>"
                        required>
             </div>
             

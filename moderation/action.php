@@ -57,6 +57,17 @@ try {
                ->execute([$weight, $t['forum_id']]);
             $db->prepare("UPDATE forums SET topics_count = topics_count + 1, posts_count = posts_count + ? WHERE id = ?")
                ->execute([$weight, $forumId]);
+            foreach ([(int)$t['forum_id'], $forumId] as $fid) {
+                $st = $db->prepare("
+                    SELECT p.id FROM posts p
+                    JOIN topics t ON t.id = p.topic_id
+                    WHERE t.forum_id = ?
+                    ORDER BY p.created_at DESC, p.id DESC LIMIT 1
+                ");
+                $st->execute([$fid]);
+                $lastId = $st->fetchColumn() ?: null;
+                $db->prepare("UPDATE forums SET last_post_id = ? WHERE id = ?")->execute([$lastId, $fid]);
+            }
             $db->commit();
 
             logModeration('topic_move', 'topic', $id, 'из #' . $t['forum_id'] . ' в #' . $forumId);
@@ -70,7 +81,7 @@ try {
             $db->prepare("DELETE FROM topics WHERE id = ?")->execute([$id]);
             foreach ($attachNames as $sn) attachUnlink($sn);
             logModeration('topic_delete', 'topic', $id, $reason);
-            done('Тема удалена', '/forum.php');
+            done('Тема удалена', '/index.php');
             break;
         }
 

@@ -178,7 +178,7 @@ require_once __DIR__ . '/../includes/header.php';
             <div class="avatar-edit-controls">
                 <label for="avatar">Аватар</label>
                 <input type="file" id="avatar" name="avatar" class="form-control" accept="image/jpeg,image/png,image/gif,image/webp">
-                <small class="form-hint">JPG, PNG, GIF, WEBP. До 2 МБ</small>
+                <small class="form-hint">JPG, PNG, GIF, WEBP. До <?= max(1, setting('avatar_max_size_mb', 2)) ?> МБ</small>
             </div>
         </div>
 

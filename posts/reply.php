@@ -57,13 +57,16 @@ if ($topic['is_closed']) {
 
 $content = trim($_POST['content'] ?? '');
 
-if (mb_strlen($content) < 2) {
-    setFlashMessage('error', 'Сообщение должно содержать минимум 2 символа');
+$replyMin = setting('reply_min', 2);
+$msgMax   = setting('message_max', 20000);
+
+if (mb_strlen($content) < $replyMin) {
+    setFlashMessage('error', "Сообщение должно содержать минимум $replyMin символов");
     redirect($backUrl);
 }
 
-if (mb_strlen($content) > 20000) {
-    setFlashMessage('error', 'Сообщение слишком длинное (максимум 20000 символов)');
+if (mb_strlen($content) > $msgMax) {
+    setFlashMessage('error', "Сообщение слишком длинное (максимум $msgMax символов)");
     redirect($backUrl);
 }
 
@@ -107,7 +110,7 @@ try {
     notifyTopicReply($topicId, $postId, $currentUser['id'], $content);
 
     // Страница, на которой окажется новый ответ
-    $perPage = 15;
+    $perPage = max(1, setting('per_page_posts', 15));
     $page = (int)ceil(((int)$topic['replies_count'] + 1) / $perPage);
 
     setFlashMessage('success', 'Ответ опубликован');

@@ -200,8 +200,15 @@ document.addEventListener('DOMContentLoaded', function() {
         alertDiv.appendChild(errorList);
         alertDiv.appendChild(closeBtn);
         
-        const form = document.querySelector('.auth-form');
-        form.parentNode.insertBefore(alertDiv, form);
+        const form = document.querySelector('.auth-form')
+                  || document.getElementById('topicForm')
+                  || document.getElementById('replyForm')
+                  || document.querySelector('form');
+        if (form && form.parentNode) {
+            form.parentNode.insertBefore(alertDiv, form);
+        } else {
+            document.body.prepend(alertDiv);
+        }
         
         // Прокрутка к ошибкам
         alertDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });

@@ -42,8 +42,8 @@ $content = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Недействительный запрос. Попробуйте снова.';
-    } elseif (!rateLimitCheck('topic_create', 5, 600)) {
-        $errors[] = 'Слишком часто создаёте темы. Подождите ' . ceil(rateLimitRetryAfter('topic_create', 600) / 60) . ' мин.';
+    } elseif (!rateLimitCheck('topic_create', max(1, setting('rl_topic_max', 5)), max(60, setting('rl_topic_window', 600)))) {
+        $errors[] = 'Слишком часто создаёте темы. Подождите ' . ceil(rateLimitRetryAfter('topic_create', max(60, setting('rl_topic_window', 600))) / 60) . ' мин.';
     } else {
         $title = trim($_POST['title'] ?? '');
         $content = trim($_POST['content'] ?? '');

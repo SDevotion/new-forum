@@ -2,10 +2,10 @@
 require_once __DIR__ . '/../includes/notifications.php';
 
 if (!isLoggedIn()) redirect('/auth/login.php');
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') redirect('/forum.php');
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') redirect('/index.php');
 if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
     setFlashMessage('error', 'Недействительный запрос');
-    redirect('/forum.php');
+    redirect('/index.php');
 }
 
 $db = Database::getInstance()->getConnection();
@@ -15,7 +15,7 @@ $back = '/topic.php?id=' . $topicId;
 
 $stmt = $db->prepare("SELECT id FROM topics WHERE id = ?");
 $stmt->execute([$topicId]);
-if (!$stmt->fetch()) { setFlashMessage('error', 'Тема не найдена'); redirect('/forum.php'); }
+if (!$stmt->fetch()) { setFlashMessage('error', 'Тема не найдена'); redirect('/index.php'); }
 
 try {
     $stmt = $db->prepare("SELECT 1 FROM topic_subscriptions WHERE user_id = ? AND topic_id = ?");

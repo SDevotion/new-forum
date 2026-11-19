@@ -31,8 +31,41 @@ try {
 
         if ($n) {
             $db->prepare("UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?")->execute([$id, $uid]);
-            $url = '/topic.php?id=' . (int)$n['topic_id'];
-            if ($n['post_id']) $url .= '#post-' . (int)$n['post_id'];
+
+            $topicId = (int)$n['topic_id'];
+            $url = '/topic.php?id=' . $topicId;
+
+            // Тема могла быть скрыта или её раздел отключён — проверяем доступность
+            $st = $db->prepare("
+                SELECT t.id FROM topics t
+                JOIN forums f ON f.id = t.forum_id
+                JOIN categories c ON c.id = f.category_id
+                WHERE t.id = ? AND f.is_active = 1 AND c.is_active = 1 AND t.is_hidden = 0
+            ");
+            $st->execute([$topicId]);
+            if (!$st->fetch()) {
+                setFlashMessage('info', 'Тема больше недоступна');
+                redirect($back);
+            }
+
+            // Вычисляем страницу пагинации, на которой находится пост
+            if ($n['post_id']) {
+                $postId = (int)$n['post_id'];
+                $st = $db->prepare("SELECT created_at, is_hidden FROM posts WHERE id = ? AND topic_id = ?");
+                $st->execute([$postId, $topicId]);
+                $p = $st->fetch();
+                if ($p && !$p['is_hidden']) {
+                    $st = $db->prepare("
+                        SELECT COUNT(*) FROM posts
+                        WHERE topic_id = ? AND is_hidden = 0
+                          AND (created_at < ? OR (created_at = ? AND id <= ?))
+                    ");
+                    $st->execute([$topicId, $p['created_at'], $p['created_at'], $postId]);
+                    $pos = (int)$st->fetchColumn();
+                    $url .= '&page=' . max(1, (int)ceil($pos / 15));
+                    $url .= '#post-' . $postId;
+                }
+            }
             redirect($url);
         }
         setFlashMessage('error', 'Уведомление не найдено');

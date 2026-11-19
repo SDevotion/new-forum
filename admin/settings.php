@@ -5,7 +5,7 @@ require_once __DIR__ . '/_layout.php';
 
 $pageTitle = 'Настройки';
 
-$tabs = ['general' => 'Основные', 'content' => 'Контент', 'pagination' => 'Пагинация'];
+$tabs = ['general' => 'Основные', 'content' => 'Контент', 'pagination' => 'Пагинация', 'uploads' => 'Вложения', 'limits' => 'Лимиты'];
 $tab = $_GET['tab'] ?? 'general';
 if (!isset($tabs[$tab])) $tab = 'general';
 
@@ -24,6 +24,14 @@ $ranges = [
     'per_page_search' => [1, 100], 'per_page_members' => [1, 100],
     'per_page_notifications' => [1, 100], 'per_page_autocomplete' => [1, 20],
     'per_page_staff' => [1, 100],
+    'attach_max_files' => [0, 20], 'attach_max_size_mb' => [1, 64],
+    'avatar_max_size_mb' => [1, 16],
+    'rl_login_max' => [1, 100],    'rl_login_window' => [60, 86400],
+    'rl_register_max' => [1, 100], 'rl_register_window' => [60, 86400],
+    'rl_topic_max' => [1, 100],    'rl_topic_window' => [60, 86400],
+    'rl_reply_max' => [1, 100],    'rl_reply_window' => [60, 86400],
+    'rl_report_max' => [1, 100],   'rl_report_window' => [60, 86400],
+    'online_window' => [60, 7200],
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -43,7 +51,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'forum_closed_message' => $msg,
         ];
     } else {
-        $keys = array_keys(array_filter(settingsDefaults(), fn($d) => $d[2] === $tab));
+        if ($tab === 'uploads') {
+            require_once __DIR__ . '/../includes/attachments.php';
+            $allowedGroups = array_keys(attachTypeCatalog());
+            $picked = $_POST['attach_types'] ?? [];
+            if (!is_array($picked)) $picked = [];
+            $kv['attach_types'] = array_values(array_intersect($allowedGroups, $picked));
+        }
+        $keys = array_keys(array_filter(settingsDefaults(), fn($d) => $d[2] === $tab && $d[0] === 'int'));
         foreach ($keys as $key) {
             if (!isset($_POST[$key])) continue;
             $val = (int)$_POST[$key];
@@ -90,6 +105,20 @@ $labels = [
     'per_page_notifications' => ['Уведомлений', 'на странице'],
     'per_page_autocomplete' => ['Автодополнение @имён', 'вариантов'],
     'per_page_staff' => ['Внутренние страницы модерации/админки', 'элементов (жалобы, журнал, пользователи)'],
+    'attach_max_files' => ['Вложений на сообщение', 'файлов; 0 — загрузка запрещена'],
+    'attach_max_size_mb' => ['Размер вложения', 'МБ на файл (не выше upload_max_filesize в php.ini)'],
+    'avatar_max_size_mb' => ['Размер аватара', 'МБ'],
+    'rl_login_max' => ['Вход: попыток', 'за окно (по IP)'],
+    'rl_login_window' => ['Вход: окно', 'секунд'],
+    'rl_register_max' => ['Регистрация: попыток', 'за окно (по IP)'],
+    'rl_register_window' => ['Регистрация: окно', 'секунд'],
+    'rl_topic_max' => ['Создание тем: штук', 'за окно (по участнику)'],
+    'rl_topic_window' => ['Создание тем: окно', 'секунд'],
+    'rl_reply_max' => ['Ответы: штук', 'за окно (по участнику)'],
+    'rl_reply_window' => ['Ответы: окно', 'секунд'],
+    'rl_report_max' => ['Жалобы: штук', 'за окно (по участнику)'],
+    'rl_report_window' => ['Жалобы: окно', 'секунд'],
+    'online_window' => ['Окно «онлайн»', 'секунд (участники и гости)'],
 ];
 
 require_once __DIR__ . '/../includes/header.php';
@@ -126,6 +155,20 @@ adminOpen('general');
             </div>
         </div>
     <?php else: ?>
+        <?php if ($tab === 'uploads'): require_once __DIR__ . '/../includes/attachments.php'; ?>
+            <div class="admin-card">
+                <h3>Разрешённые типы вложений</h3>
+                <div class="admin-types">
+                    <?php $enabledGroups = attachEnabledGroups(); foreach (attachTypeCatalog() as $g => $def): ?>
+                        <label class="admin-check admin-type-item">
+                            <input type="checkbox" name="attach_types[]" value="<?= $g ?>" <?= in_array($g, $enabledGroups, true) ? 'checked' : '' ?>>
+                            <span><?= $def[2] ?></span>
+                        </label>
+                    <?php endforeach; ?>
+                </div>
+                <small class="form-hint">Список accept и подсказка в формах генерируются из этих флажков. SVG/HTML/PHP запрещены всегда.</small>
+            </div>
+        <?php endif; ?>
         <div class="admin-card">
             <h3><?= $tabs[$tab] ?></h3>
             <div class="admin-grid">

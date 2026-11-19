@@ -316,9 +316,11 @@ $$
 DELIMITER ;
 DELIMITER $$
 CREATE TRIGGER `trg_topics_after_delete` AFTER DELETE ON `topics` FOR EACH ROW BEGIN
+    -- posts_count уже уменьшен trg_posts_after_delete для каждого ответа;
+    -- здесь вычитаем только первое сообщение темы (оно не хранится в posts)
     UPDATE forums 
     SET topics_count = GREATEST(topics_count - 1, 0),
-        posts_count = GREATEST(posts_count - OLD.replies_count - 1, 0)
+        posts_count = GREATEST(posts_count - 1, 0)
     WHERE id = OLD.forum_id;
 END
 $$

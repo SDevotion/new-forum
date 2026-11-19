@@ -63,7 +63,9 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < 2) {
 
     $sqlTopics = "
         SELECT 'topic' AS kind, t.id, t.id AS topic_id, t.title, t.content,
-               t.created_at, t.replies_count, t.views_count,
+               t.created_at,
+               (SELECT COUNT(*) FROM posts vp WHERE vp.topic_id = t.id AND (vp.is_hidden = 0 OR ? = 1)) AS replies_count,
+               t.views_count,
                u.username, u.avatar, f.title AS forum_title,
                MATCH(t.title, t.content) AGAINST (? IN BOOLEAN MODE) AS score
         FROM topics t
@@ -86,23 +88,23 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < 2) {
         JOIN forums f ON f.id = t.forum_id
         JOIN categories c ON c.id = f.category_id
         WHERE MATCH(p.content) AGAINST (? IN BOOLEAN MODE)
-          AND f.is_active = 1 AND c.is_active = 1 AND t.is_hidden = 0
+          AND f.is_active = 1 AND c.is_active = 1$hiddenT
           $hiddenP $forumP $authP $dateP
     ";
 
-    $order = $sort === 'relevance' ? 'score DESC, id DESC'
-           : ($sort === 'new' ? 'created_at DESC' : 'created_at ASC');
+    $order = $sort === 'relevance' ? 'score DESC, created_at DESC, kind ASC, id DESC'
+           : ($sort === 'new' ? 'created_at DESC, kind ASC, id DESC' : 'created_at ASC, kind ASC, id ASC');
 
     try {
         if ($scope === 'topics') {
             $cnt = $db->prepare("SELECT COUNT(*) FROM ($sqlTopics) x");
-            $cnt->execute([$ft, $ft]);
+            $cnt->execute([$staff ? 1 : 0, $ft, $ft]);
             $total = (int)$cnt->fetchColumn();
             $totalPages = max(1, (int)ceil($total / $perPage));
             if ($page > $totalPages) { $page = $totalPages; $offset = ($page - 1) * $perPage; }
 
             $st = $db->prepare("SELECT * FROM ($sqlTopics) x ORDER BY $order LIMIT $perPage OFFSET $offset");
-            $st->execute([$ft, $ft]);
+            $st->execute([$staff ? 1 : 0, $ft, $ft]);
             $results = $st->fetchAll();
 
         } elseif ($scope === 'posts') {
@@ -120,13 +122,13 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < 2) {
             $union = "$sqlTopics UNION ALL $sqlPosts";
 
             $cnt = $db->prepare("SELECT COUNT(*) FROM ($union) x");
-            $cnt->execute([$ft, $ft, $ft, $ft]);
+            $cnt->execute([$staff ? 1 : 0, $ft, $ft, $ft, $ft]);
             $total = (int)$cnt->fetchColumn();
             $totalPages = max(1, (int)ceil($total / $perPage));
             if ($page > $totalPages) { $page = $totalPages; $offset = ($page - 1) * $perPage; }
 
             $st = $db->prepare("SELECT * FROM ($union) x ORDER BY $order LIMIT $perPage OFFSET $offset");
-            $st->execute([$ft, $ft, $ft, $ft]);
+            $st->execute([$staff ? 1 : 0, $ft, $ft, $ft, $ft]);
             $results = $st->fetchAll();
         }
 
@@ -139,7 +141,7 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < 2) {
         }
     } catch (PDOException $e) {
         error_log('Search error: ' . $e->getMessage());
-        $error = 'Ошибка поиска. Проверьте, что FULLTEXT-индексы созданы (install_search.sql).';
+        $error = 'Ошибка поиска. Проверьте, что FULLTEXT-индексы ft_topic и ft_post созданы (database.sql).';
     }
 }
 

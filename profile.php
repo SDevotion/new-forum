@@ -27,7 +27,7 @@ if (!$profile) {
     http_response_code(404);
     $pageTitle = 'Пользователь не найден';
     require_once __DIR__ . '/includes/header.php';
-    echo '<div class="empty-state"><div class="empty-icon">👤</div><h3>Пользователь не найден</h3><a href="/forum.php" class="btn btn-primary">Вернуться к форуму</a></div>';
+    echo '<div class="empty-state"><div class="empty-icon">👤</div><h3>Пользователь не найден</h3><a href="/index.php" class="btn btn-primary">Вернуться к форуму</a></div>';
     require_once __DIR__ . '/includes/footer.php';
     exit;
 }
@@ -48,7 +48,8 @@ if ($tab === 'topics') {
     $stmt = $db->prepare("
         SELECT COUNT(*) FROM topics t
         JOIN forums f ON f.id = t.forum_id
-        WHERE t.user_id = ? AND f.is_active = 1 AND (t.is_hidden = 0 OR ? = 1)
+        JOIN categories c ON c.id = f.category_id
+        WHERE t.user_id = ? AND f.is_active = 1 AND c.is_active = 1 AND (t.is_hidden = 0 OR ? = 1)
     ");
     $stmt->execute([$userId, $staffFlag]);
     $total = (int)$stmt->fetchColumn();
@@ -57,15 +58,17 @@ if ($tab === 'topics') {
     if ($page > $totalPages) { $page = $totalPages; $offset = ($page - 1) * $perPage; }
 
     $stmt = $db->prepare("
-        SELECT t.id, t.title, t.replies_count, t.views_count, t.created_at,
+        SELECT t.id, t.title, t.views_count, t.created_at,
+               (SELECT COUNT(*) FROM posts vp WHERE vp.topic_id = t.id AND (vp.is_hidden = 0 OR ? = 1)) AS visible_replies,
                f.title AS forum_title
         FROM topics t
         JOIN forums f ON f.id = t.forum_id
-        WHERE t.user_id = ? AND f.is_active = 1 AND (t.is_hidden = 0 OR ? = 1)
+        JOIN categories c ON c.id = f.category_id
+        WHERE t.user_id = ? AND f.is_active = 1 AND c.is_active = 1 AND (t.is_hidden = 0 OR ? = 1)
         ORDER BY t.created_at DESC, t.id DESC
         LIMIT $perPage OFFSET $offset
     ");
-    $stmt->execute([$userId, $staffFlag]);
+    $stmt->execute([$staffFlag, $userId, $staffFlag]);
 } else {
     $stmt = $db->prepare("
         SELECT COUNT(*) FROM posts p
@@ -177,7 +180,7 @@ require_once __DIR__ . '/includes/header.php';
                     <div class="activity-title"><?= escape($item['title']) ?></div>
                     <div class="activity-meta">
                         Раздел: <?= escape($item['forum_title']) ?>
-                        · <?= (int)$item['replies_count'] ?> отв.
+                        · <?= (int)$item['visible_replies'] ?> отв.
                         · <?= date('d.m.Y H:i', strtotime($item['created_at'])) ?>
                     </div>
                 </a>

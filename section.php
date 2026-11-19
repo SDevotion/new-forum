@@ -18,7 +18,7 @@ if (!$forum) {
     http_response_code(404);
     $pageTitle = 'Раздел не найден';
     require_once __DIR__ . '/includes/header.php';
-    echo '<div class="empty-state"><div class="empty-icon">🔍</div><h3>Раздел не найден</h3><a href="/forum.php" class="btn btn-primary">Вернуться к форуму</a></div>';
+    echo '<div class="empty-state"><div class="empty-icon">🔍</div><h3>Раздел не найден</h3><a href="/index.php" class="btn btn-primary">Вернуться к форуму</a></div>';
     require_once __DIR__ . '/includes/footer.php';
     exit;
 }
@@ -50,14 +50,15 @@ $stmt = $db->prepare("
             JOIN users lu ON lu.id = lp.user_id
             WHERE lp.topic_id = t.id
             ORDER BY lp.created_at DESC, lp.id DESC
-            LIMIT 1) AS last_username
+            LIMIT 1) AS last_username,
+           (SELECT COUNT(*) FROM posts vp WHERE vp.topic_id = t.id AND (vp.is_hidden = 0 OR ? = 1)) AS visible_replies
     FROM topics t
     JOIN users u ON u.id = t.user_id
     WHERE t.forum_id = ? AND (t.is_hidden = 0 OR ? = 1)
     ORDER BY t.is_pinned DESC, t.last_post_at DESC, t.id DESC
     LIMIT $perPage OFFSET $offset
 ");
-$stmt->execute([$forumId, $staff ? 1 : 0]);
+$stmt->execute([$staff ? 1 : 0, $forumId, $staff ? 1 : 0]);
 $topics = $stmt->fetchAll();
 
 require_once __DIR__ . '/includes/header.php';
@@ -65,8 +66,6 @@ require_once __DIR__ . '/includes/header.php';
 
 <nav class="breadcrumbs">
     <a href="/index.php">Главная</a>
-    <span class="sep">›</span>
-    <a href="/forum.php">Форум</a>
     <span class="sep">›</span>
     <span class="current"><?= escape($forum['title']) ?></span>
 </nav>
@@ -118,7 +117,7 @@ require_once __DIR__ . '/includes/header.php';
                     </div>
                 </div>
                 <div class="topic-row-stats col-stats">
-                    <span><strong><?= (int)$t['replies_count'] ?></strong> отв.</span>
+                    <span><strong><?= (int)$t['visible_replies'] ?></strong> отв.</span>
                     <span><strong><?= (int)$t['views_count'] ?></strong> просм.</span>
                 </div>
                 <div class="topic-row-last col-last">

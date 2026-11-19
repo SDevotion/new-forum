@@ -37,7 +37,7 @@ if (!$obj) {
     http_response_code(404);
     $pageTitle = 'Не найдено';
     require_once __DIR__ . '/includes/header.php';
-    echo '<div class="empty-state"><div class="empty-icon">🔍</div><h3>Объект не найден</h3><a href="/forum.php" class="btn btn-primary">К форуму</a></div>';
+    echo '<div class="empty-state"><div class="empty-icon">🔍</div><h3>Объект не найден</h3><a href="/index.php" class="btn btn-primary">К форуму</a></div>';
     require_once __DIR__ . '/includes/footer.php';
     exit;
 }
@@ -52,7 +52,6 @@ require_once __DIR__ . '/includes/header.php';
 
 <nav class="breadcrumbs">
     <a href="/index.php">Главная</a><span class="sep">›</span>
-    <a href="/forum.php">Форум</a><span class="sep">›</span>
     <a href="<?= escape($backUrl) ?>">Тема</a><span class="sep">›</span>
     <span class="current">История правок</span>
 </nav>

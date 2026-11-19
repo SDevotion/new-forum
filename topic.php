@@ -31,7 +31,7 @@ if (!$topic || ($topic['is_hidden'] && !$isStaff)) {
     http_response_code(404);
     $pageTitle = 'Тема не найдена';
     require_once __DIR__ . '/includes/header.php';
-    echo '<div class="empty-state"><div class="empty-icon">🔍</div><h3>Тема не найдена</h3><a href="/forum.php" class="btn btn-primary">Вернуться к форуму</a></div>';
+    echo '<div class="empty-state"><div class="empty-icon">🔍</div><h3>Тема не найдена</h3><a href="/index.php" class="btn btn-primary">Вернуться к форуму</a></div>';
     require_once __DIR__ . '/includes/footer.php';
     exit;
 }
@@ -55,6 +55,7 @@ $page = max(1, (int)($_GET['page'] ?? 1));
 $stmt = $db->prepare("SELECT COUNT(*) FROM posts WHERE topic_id = ? AND (is_hidden = 0 OR ? = 1)");
 $stmt->execute([$topicId, $isStaff ? 1 : 0]);
 $visibleReplies = (int)$stmt->fetchColumn();
+$topic['replies_count'] = $visibleReplies;
 
 $totalPages = max(1, (int)ceil($visibleReplies / $perPage));
 if ($page > $totalPages) $page = $totalPages;
@@ -89,8 +90,6 @@ require_once __DIR__ . '/includes/header.php';
 
 <nav class="breadcrumbs">
     <a href="/index.php">Главная</a>
-    <span class="sep">›</span>
-    <a href="/forum.php">Форум</a>
     <span class="sep">›</span>
     <a href="/section.php?id=<?= (int)$topic['forum_id'] ?>"><?= escape($topic['forum_title']) ?></a>
     <span class="sep">›</span>

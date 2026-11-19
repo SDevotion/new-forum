@@ -55,6 +55,8 @@ $actionNames = [
     'category_add' => 'Создание категории', 'category_toggle' => 'Видимость категории',
     'category_delete' => 'Удаление категории', 'forum_add' => 'Создание раздела',
     'forum_toggle' => 'Видимость раздела', 'forum_delete' => 'Удаление раздела',
+    'settings_update' => 'Изменение настроек',
+    'maint_recount' => 'Пересчёт счётчиков', 'maint_clean' => 'Очистка данных',
 ];
 
 require_once __DIR__ . '/../includes/header.php';

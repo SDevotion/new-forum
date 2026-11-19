@@ -45,8 +45,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!password_verify($old, $hash)) {
                 $passErrors[] = 'Текущий пароль указан неверно';
             }
-            if (strlen($new) < 6) {
-                $passErrors[] = 'Новый пароль должен содержать минимум 6 символов';
+            if (strlen($new) < setting('password_min', 6)) {
+                $passErrors[] = 'Новый пароль должен содержать минимум ' . setting('password_min', 6) . ' символов';
             }
             if ($new !== $confirm) {
                 $passErrors[] = 'Новые пароли не совпадают';
@@ -80,17 +80,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $notifyReplies = isset($_POST['notify_replies']);
             $notifyMentions = isset($_POST['notify_mentions']);
 
-            if (mb_strlen($bio) > 1000) {
-                $errors[] = 'О себе: максимум 1000 символов';
+            if (mb_strlen($bio) > setting('bio_max', 1000)) {
+                $errors[] = 'О себе: максимум ' . setting('bio_max', 1000) . ' символов';
             }
-            if (mb_strlen($location) > 100) {
-                $errors[] = 'Город: максимум 100 символов';
+            if (mb_strlen($location) > setting('location_max', 100)) {
+                $errors[] = 'Город: максимум ' . setting('location_max', 100) . ' символов';
             }
-            if (mb_strlen($signature) > 500) {
-                $errors[] = 'Подпись: максимум 500 символов';
+            if (mb_strlen($signature) > setting('signature_max', 500)) {
+                $errors[] = 'Подпись: максимум ' . setting('signature_max', 500) . ' символов';
             }
             if ($website !== '') {
-                if (mb_strlen($website) > 255) {
+                if (mb_strlen($website) > setting('website_max', 255)) {
                     $errors[] = 'Ссылка на сайт слишком длинная';
                 } elseif (!filter_var($website, FILTER_VALIDATE_URL) || !preg_match('#^https?://#i', $website)) {
                     $errors[] = 'Укажите корректный адрес сайта (http:// или https://)';
@@ -184,23 +184,23 @@ require_once __DIR__ . '/../includes/header.php';
 
         <div class="form-group">
             <label for="bio">О себе</label>
-            <textarea id="bio" name="bio" class="form-control" rows="4" maxlength="1000" placeholder="Несколько слов о себе..."><?= escape($bio) ?></textarea>
+            <textarea id="bio" name="bio" class="form-control" rows="4" maxlength="<?= setting('bio_max', 1000) ?>" placeholder="Несколько слов о себе..."><?= escape($bio) ?></textarea>
         </div>
 
         <div class="form-row">
             <div class="form-group">
                 <label for="location">Город</label>
-                <input type="text" id="location" name="location" class="form-control" value="<?= escape($location) ?>" maxlength="100" placeholder="Москва">
+                <input type="text" id="location" name="location" class="form-control" value="<?= escape($location) ?>" maxlength="<?= setting('location_max', 100) ?>" placeholder="Москва">
             </div>
             <div class="form-group">
                 <label for="website">Сайт</label>
-                <input type="url" id="website" name="website" class="form-control" value="<?= escape($website) ?>" maxlength="255" placeholder="https://example.com">
+                <input type="url" id="website" name="website" class="form-control" value="<?= escape($website) ?>" maxlength="<?= setting('website_max', 255) ?>" placeholder="https://example.com">
             </div>
         </div>
 
         <div class="form-group">
             <label for="signature">Подпись</label>
-            <textarea id="signature" name="signature" class="form-control" rows="2" maxlength="500" placeholder="Отображается под вашими сообщениями"><?= escape($signature) ?></textarea>
+            <textarea id="signature" name="signature" class="form-control" rows="2" maxlength="<?= setting('signature_max', 500) ?>" placeholder="Отображается под вашими сообщениями"><?= escape($signature) ?></textarea>
         </div>
 
         <div class="form-group">
@@ -256,11 +256,11 @@ require_once __DIR__ . '/../includes/header.php';
         <div class="form-row">
             <div class="form-group">
                 <label for="new_password">Новый пароль</label>
-                <input type="password" id="new_password" name="new_password" class="form-control" minlength="6" required>
+                <input type="password" id="new_password" name="new_password" class="form-control" minlength="<?= setting('password_min', 6) ?>" required>
             </div>
             <div class="form-group">
                 <label for="new_password_confirm">Повторите новый</label>
-                <input type="password" id="new_password_confirm" name="new_password_confirm" class="form-control" minlength="6" required>
+                <input type="password" id="new_password_confirm" name="new_password_confirm" class="form-control" minlength="<?= setting('password_min', 6) ?>" required>
             </div>
         </div>
 

@@ -14,8 +14,8 @@ $username = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Недействительный запрос. Попробуйте снова.';
-    } elseif (!rateLimitCheck('login', 5, 900, true)) {
-        $errors[] = 'Слишком много попыток входа. Подождите ' . ceil(rateLimitRetryAfter('login', 900, true) / 60) . ' мин. и попробуйте снова.';
+    } elseif (!rateLimitCheck('login', max(1, setting('rl_login_max', 5)), max(60, setting('rl_login_window', 900)), true)) {
+        $errors[] = 'Слишком много попыток входа. Подождите ' . ceil(rateLimitRetryAfter('login', max(60, setting('rl_login_window', 900)), true) / 60) . ' мин. и попробуйте снова.';
     } else {
         $username = trim($_POST['username'] ?? '');
         $password = $_POST['password'] ?? '';

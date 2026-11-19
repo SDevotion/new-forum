@@ -16,7 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Проверка CSRF
     if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Недействительный запрос. Попробуйте снова.';
-    } elseif (!rateLimitCheck('register', 3, 3600, true)) {
+    } elseif (!rateLimitCheck('register', max(1, setting('rl_register_max', 3)), max(60, setting('rl_register_window', 3600)), true)) {
         $errors[] = 'Слишком много регистраций с вашего адреса. Попробуйте через час.';
     } else {
         $username = trim($_POST['username'] ?? '');

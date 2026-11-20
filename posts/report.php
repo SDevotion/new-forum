@@ -10,7 +10,7 @@ $type = ($_POST['target_type'] ?? '') === 'post' ? 'post' : 'topic';
 $id = (int)($_POST['target_id'] ?? 0);
 $reason = trim($_POST['reason'] ?? '');
 $back = $_POST['back'] ?? '/index.php';
-if (!preg_match('#^/[A-Za-z0-9_./?=&#%-]*$#', $back)) $back = '/index.php';
+if (!preg_match('~^/[A-Za-z0-9_./?=&#%-]*$~', $back)) $back = '/index.php';
 
 if ($id <= 0) { setFlashMessage('error', 'Объект не найден'); redirect($back); }
 $reportMin = setting('report_min', 5);
@@ -23,9 +23,14 @@ $db = Database::getInstance()->getConnection();
 $u = getCurrentUser();
 
 $table = $type === 'post' ? 'posts' : 'topics';
-$stmt = $db->prepare("SELECT id FROM `$table` WHERE id = ?");
+$stmt = $db->prepare("SELECT id, user_id FROM `$table` WHERE id = ?");
 $stmt->execute([$id]);
-if (!$stmt->fetch()) { setFlashMessage('error', 'Объект не найден'); redirect($back); }
+$targetObj = $stmt->fetch();
+if (!$targetObj) { setFlashMessage('error', 'Объект не найден'); redirect($back); }
+if ((int)$targetObj['user_id'] === (int)$u['id']) {
+    setFlashMessage('error', 'Нельзя пожаловаться на собственное сообщение');
+    redirect($back);
+}
 
 try {
     $stmt = $db->prepare("INSERT INTO reports (user_id, target_type, target_id, reason) VALUES (?,?,?,?)");

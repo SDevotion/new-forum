@@ -87,12 +87,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Автор автоматически подписывается на свою тему
                 subscribeTopic($currentUser['id'], $topicId);
 
-                // Уведомления об упоминаниях в первом сообщении
-                foreach (parseMentions($content) as $name) {
+                // Уведомления об упоминаниях и цитатах в первом сообщении
+                foreach (parseMentions($content) as $name => $kind) {
                     $st = $db->prepare("SELECT id FROM users WHERE username = ? AND is_active = 1");
                     $st->execute([$name]);
                     $uid = (int)$st->fetchColumn();
-                    if ($uid) notifyUser($uid, 'mention', $currentUser['id'], $topicId, null, mdExcerpt($content));
+                    if ($uid) notifyUser($uid, $kind, $currentUser['id'], $topicId, null, mdExcerpt($content));
                 }
 
                 setFlashMessage('success', 'Тема успешно создана!');

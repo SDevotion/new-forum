@@ -31,7 +31,7 @@ $db = Database::getInstance()->getConnection();
 $currentUser = getCurrentUser();
 
 $stmt = $db->prepare("
-    SELECT t.id, t.is_closed, t.is_hidden, t.replies_count
+    SELECT t.id, t.is_closed, t.is_hidden
     FROM topics t
     JOIN forums f ON f.id = t.forum_id
     JOIN categories c ON c.id = f.category_id
@@ -109,9 +109,19 @@ try {
     subscribeTopic($currentUser['id'], $topicId);
     notifyTopicReply($topicId, $postId, $currentUser['id'], $content);
 
-    // Страница, на которой окажется новый ответ
+    // Страница, на которой окажется новый ответ: позиция среди видимых постов
+    // (свежий COUNT после вставки; учитываем права стаффа на скрытые посты)
     $perPage = max(1, setting('per_page_posts', 15));
-    $page = (int)ceil(((int)$topic['replies_count'] + 1) / $perPage);
+    $staffFlag = isModerator() ? 1 : 0;
+    $st = $db->prepare("
+        SELECT COUNT(*) FROM posts
+        WHERE topic_id = ? AND (is_hidden = 0 OR ? = 1)
+          AND (created_at < (SELECT created_at FROM posts WHERE id = ?)
+               OR (created_at = (SELECT created_at FROM posts WHERE id = ?) AND id <= ?))
+    ");
+    $st->execute([$topicId, $staffFlag, $postId, $postId, $postId]);
+    $pos = max(1, (int)$st->fetchColumn());
+    $page = (int)ceil($pos / $perPage);
 
     setFlashMessage('success', 'Ответ опубликован');
     redirect('/topic.php?id=' . $topicId . '&page=' . $page . '#post-' . $postId);

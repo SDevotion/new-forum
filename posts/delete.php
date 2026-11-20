@@ -37,12 +37,18 @@ if (!$isOwner && !$isStaff) {
 
 try {
     $attachRows = attachForObject('post', $postId);
+    $db->beginTransaction();
     $db->prepare("DELETE FROM attachments WHERE target_type = 'post' AND target_id = ?")->execute([$postId]);
+    $db->prepare("DELETE FROM post_edits WHERE target_type = 'post' AND target_id = ?")->execute([$postId]);
+    $db->prepare("DELETE FROM reports WHERE target_type = 'post' AND target_id = ?")->execute([$postId]);
     $db->prepare("DELETE FROM posts WHERE id = ?")->execute([$postId]);
+    $db->commit();
+    // файлы с диска — только после успешного commit
     foreach ($attachRows as $ar) attachUnlink($ar['stored_name']);
     unset($_SESSION['last_post_hash'][$topicId]);
     setFlashMessage('success', 'Сообщение удалено');
 } catch (PDOException $e) {
+    if ($db->inTransaction()) $db->rollBack();
     error_log("Post delete error: " . $e->getMessage());
     setFlashMessage('error', 'Ошибка при удалении сообщения');
 }

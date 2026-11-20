@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/notifications.php';
+require_once __DIR__ . '/../includes/permissions.php';
 
 if (!isLoggedIn()) redirect('/auth/login.php');
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') redirect('/notifications.php');
@@ -36,31 +37,34 @@ try {
             $url = '/topic.php?id=' . $topicId;
 
             // Тема могла быть скрыта или её раздел отключён — проверяем доступность
+            // (стафф видит скрытые темы, как и в topic.php)
+            $staffFlag = isModerator() ? 1 : 0;
             $st = $db->prepare("
                 SELECT t.id FROM topics t
                 JOIN forums f ON f.id = t.forum_id
                 JOIN categories c ON c.id = f.category_id
-                WHERE t.id = ? AND f.is_active = 1 AND c.is_active = 1 AND t.is_hidden = 0
+                WHERE t.id = ? AND f.is_active = 1 AND c.is_active = 1 AND (t.is_hidden = 0 OR ? = 1)
             ");
-            $st->execute([$topicId]);
+            $st->execute([$topicId, $staffFlag]);
             if (!$st->fetch()) {
                 setFlashMessage('info', 'Тема больше недоступна');
                 redirect($back);
             }
 
             // Вычисляем страницу пагинации, на которой находится пост
+            // (скрытые посты учитываются для стаффа — как в topic.php)
             if ($n['post_id']) {
                 $postId = (int)$n['post_id'];
                 $st = $db->prepare("SELECT created_at, is_hidden FROM posts WHERE id = ? AND topic_id = ?");
                 $st->execute([$postId, $topicId]);
                 $p = $st->fetch();
-                if ($p && !$p['is_hidden']) {
+                if ($p && (!$p['is_hidden'] || $staffFlag)) {
                     $st = $db->prepare("
                         SELECT COUNT(*) FROM posts
-                        WHERE topic_id = ? AND is_hidden = 0
+                        WHERE topic_id = ? AND (is_hidden = 0 OR ? = 1)
                           AND (created_at < ? OR (created_at = ? AND id <= ?))
                     ");
-                    $st->execute([$topicId, $p['created_at'], $p['created_at'], $postId]);
+                    $st->execute([$topicId, $staffFlag, $p['created_at'], $p['created_at'], $postId]);
                     $pos = (int)$st->fetchColumn();
                     $url .= '&page=' . max(1, (int)ceil($pos / max(1, setting('per_page_posts', 15))));
                     $url .= '#post-' . $postId;

@@ -670,10 +670,19 @@ document.addEventListener('DOMContentLoaded', function() {
         const fmt = b => b >= 1048576 ? (b / 1048576).toFixed(1) + ' МБ'
                        : b >= 1024 ? (b / 1024).toFixed(1) + ' КБ' : b + ' Б';
 
+        // Удаляет файл из input по индексу (FileList неизменяем — пересобираем через DataTransfer)
+        function removeAt(idx) {
+            const dt = new DataTransfer();
+            Array.from(input.files).forEach((f, i) => { if (i !== idx) dt.items.add(f); });
+            input.files = dt.files;
+            prevFiles = Array.from(input.files);
+            render();
+        }
+
         function render() {
             list.innerHTML = '';
             const files = Array.from(input.files);
-            files.forEach(f => {
+            files.forEach((f, idx) => {
                 const row = document.createElement('div');
                 row.className = 'attach-selected-item';
                 const bad = f.size > maxSize;
@@ -697,8 +706,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 const size = document.createElement('span');
                 size.className = 'attach-file-size';
                 size.textContent = fmt(f.size) + (bad ? ' — слишком большой!' : '');
+                const del = document.createElement('button');
+                del.type = 'button';
+                del.className = 'attach-selected-remove';
+                del.title = 'Убрать файл';
+                del.textContent = '×';
+                del.addEventListener('click', () => removeAt(idx));
                 row.appendChild(name);
                 row.appendChild(size);
+                row.appendChild(del);
                 list.appendChild(row);
             });
             const free = slots();
@@ -710,7 +726,21 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        input.addEventListener('change', render);
+        input.addEventListener('change', function() {
+            // Накапливаем выбор: браузерный диалог заменяет FileList целиком,
+            // поэтому объединяем с уже выбранными (деdup по имени+размеру+дате изменения)
+            const merged = new DataTransfer();
+            const seen = new Set();
+            const key = f => f.name + '|' + f.size + '|' + f.lastModified;
+            Array.from(prevFiles).concat(Array.from(input.files)).forEach(f => {
+                const k = key(f);
+                if (!seen.has(k)) { seen.add(k); merged.items.add(f); }
+            });
+            input.files = merged.files;
+            prevFiles = Array.from(input.files);
+            render();
+        });
+        let prevFiles = [];
 
         const form = box.closest('form');
         if (form) {

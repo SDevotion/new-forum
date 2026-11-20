@@ -62,25 +62,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 LEFT JOIN posts p  ON r.target_type = 'post'  AND p.id = r.target_id
                 WHERE t.id IS NULL AND p.id IS NULL
             ");
-            logModeration('maint_clean', 'forum', 0, "orphan records: edits=$n1, reports=$n2");
+            logModeration('maint_clean', 'forum', 0, "Записи без целей: правок — $n1, жалоб — $n2");
             setFlashMessage('success', "Удалено записей без целей: правок — $n1, жалоб — $n2");
             break;
 
         case 'clean_ratelimits':
             $n = $db->exec("DELETE FROM rate_limits WHERE created_at < NOW() - INTERVAL 1 DAY");
-            logModeration('maint_clean', 'forum', 0, "rate_limits: $n");
+            logModeration('maint_clean', 'forum', 0, "Лимитеры частоты: удалено записей — $n");
             setFlashMessage('success', "Удалено записей rate_limits: $n");
             break;
 
         case 'clean_searchlog':
             $n = $db->exec("DELETE FROM search_log WHERE created_at < NOW() - INTERVAL 90 DAY");
-            logModeration('maint_clean', 'forum', 0, "search_log: $n");
+            logModeration('maint_clean', 'forum', 0, "Журнал поиска: удалено записей — $n");
             setFlashMessage('success', "Удалено записей search_log: $n");
             break;
 
         case 'clean_notifications':
             $n = $db->exec("DELETE FROM notifications WHERE is_read = 1 AND created_at < NOW() - INTERVAL 30 DAY");
-            logModeration('maint_clean', 'forum', 0, "notifications: $n");
+            logModeration('maint_clean', 'forum', 0, "Прочитанные уведомления: удалено — $n");
             setFlashMessage('success', "Удалено прочитанных уведомлений: $n");
             break;
 
@@ -94,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $fp = ATTACH_DIR . '/' . $fn;
                 if (is_file($fp)) { $bytes += filesize($fp); if (@unlink($fp)) $removed++; }
             }
-            logModeration('maint_clean', 'forum', 0, "orphan attachments: $removed");
+            logModeration('maint_clean', 'forum', 0, "Вложения без записей: удалено файлов — $removed");
             setFlashMessage('success', "Удалено осиротевших вложений: $removed (" . round($bytes / 1048576, 1) . " МБ)");
             break;
 
@@ -111,7 +111,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $fp = $dir . '/' . $fn;
                 if (is_file($fp)) { $bytes += filesize($fp); if (@unlink($fp)) $removed++; }
             }
-            logModeration('maint_clean', 'forum', 0, "orphan avatars: $removed");
+            logModeration('maint_clean', 'forum', 0, "Аватары без ссылок: удалено файлов — $removed");
             setFlashMessage('success', "Удалено неиспользуемых аватаров: $removed (" . round($bytes / 1048576, 1) . " МБ)");
             break;
 
@@ -154,21 +154,7 @@ $st = $db->prepare("
 $st->execute($params);
 $log = $st->fetchAll();
 
-$actionNames = [
-    'topic_pin_on' => 'Закрепление темы', 'topic_pin_off' => 'Открепление темы',
-    'topic_close_on' => 'Закрытие темы', 'topic_close_off' => 'Открытие темы',
-    'topic_hide_on' => 'Скрытие темы', 'topic_hide_off' => 'Показ темы',
-    'topic_move' => 'Перенос темы', 'topic_delete' => 'Удаление темы',
-    'post_hide' => 'Скрытие сообщения', 'post_unhide' => 'Показ сообщения',
-    'report_resolve' => 'Жалоба принята', 'report_reject' => 'Жалоба отклонена',
-    'user_ban' => 'Блокировка пользователя', 'user_unban' => 'Разблокировка',
-    'user_role' => 'Смена роли', 'restore_revision' => 'Откат версии',
-    'category_add' => 'Создание категории', 'category_toggle' => 'Видимость категории',
-    'category_delete' => 'Удаление категории', 'forum_add' => 'Создание раздела',
-    'forum_toggle' => 'Видимость раздела', 'forum_delete' => 'Удаление раздела',
-    'settings_update' => 'Изменение настроек',
-    'maint_recount' => 'Пересчёт счётчиков', 'maint_clean' => 'Очистка данных',
-];
+$actionNames = moderationActionNames();
 $targetNames = ['topic' => 'Тема', 'post' => 'Сообщение', 'user' => 'Пользователь', 'forum' => 'Раздел', 'category' => 'Категория'];
 
 // Список действий для фильтра — из реальных записей
@@ -277,7 +263,8 @@ adminOpen('maintenance');
                     <strong><?= escape($l['username']) ?></strong>
                     — <?= escape($actionNames[$l['action']] ?? $l['action']) ?>
                     · <?= escape($targetNames[$l['target_type']] ?? $l['target_type']) ?> #<?= (int)$l['target_id'] ?>
-                    <?= $l['reason'] ? '· ' . escape($l['reason']) : '' ?>
+                    <?php $r = moderationReasonLabel($l['reason']); ?>
+                    <?= $r !== '' ? '· ' . escape($r) : '' ?>
                 </li>
             <?php endforeach; ?>
         </ul>

@@ -73,7 +73,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $changed = settingsSet($kv);
     if ($changed) {
-        logModeration('settings_update', 'forum', 0, implode(', ', $changed));
+        $labelsMap = settingLabels();
+        $changedLabels = array_map(fn($k) => $labelsMap[$k] ?? $k, $changed);
+        logModeration('settings_update', 'forum', 0, implode(', ', $changedLabels));
         setFlashMessage('success', 'Настройки сохранены');
     } else {
         setFlashMessage('info', 'Изменений нет');

@@ -73,8 +73,9 @@ adminOpen('dashboard');
                     <li>
                         <span class="admin-log-date"><?= date('d.m H:i', strtotime($l['created_at'])) ?></span>
                         <strong><?= escape($l['username']) ?></strong>
-                        — <?= escape($l['action']) ?>
-                        <?= $l['reason'] ? '· ' . escape(mb_strimwidth($l['reason'], 0, 60, '…')) : '' ?>
+                        — <?= escape(moderationActionNames()[$l['action']] ?? $l['action']) ?>
+                        <?php $r = moderationReasonLabel($l['reason']); ?>
+                        <?= $r !== '' ? '· ' . escape(mb_strimwidth($r, 0, 60, '…')) : '' ?>
                     </li>
                 <?php endforeach; ?>
             </ul>

@@ -75,13 +75,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         elseif (mb_strlen($content) > $msgMax) $errors[] = "Сообщение слишком длинное (максимум $msgMax символов)";
         if (mb_strlen($reason) > 255) $errors[] = 'Причина правки: максимум 255 символов';
 
-        $attachFiles = attachNormalizeFiles();
-        $errors = array_merge($errors, attachValidate($attachFiles));
-
         // отмеченные к удалению — только вложения этого объекта
         $removeIds = array_map('intval', (array)($_POST['attach_remove'] ?? []));
         $validIds = array_map('intval', array_column($attachExisting, 'id'));
         $removeIds = array_values(array_intersect($removeIds, $validIds));
+
+        // лимит считаем суммарно: остающиеся старые + новые
+        $attachFiles = attachNormalizeFiles();
+        $remaining = count($attachExisting) - count($removeIds);
+        $errors = array_merge($errors, attachValidate($attachFiles, $remaining));
 
         $unchanged = ($content === $obj['content']) && ($type !== 'topic' || $title === $obj['title'])
                      && !$attachFiles && !$removeIds;
@@ -154,7 +156,7 @@ require_once __DIR__ . '/../includes/header.php';
     <h1 class="form-card-title"><?= $type === 'topic' ? 'Редактирование темы' : 'Редактирование сообщения' ?></h1>
     <p class="form-card-subtitle">
         <?= escape($obj['context_title']) ?>
-        <?php if (!isModerator()): ?> · Правка доступна в течение 24 часов после публикации<?php endif; ?>
+        <?php if (!isModerator()): ?> · Правка доступна в течение <?= (int)setting('edit_window_hours', 24) ?> ч. после публикации<?php endif; ?>
     </p>
 
     <?php if ($errors): ?>

@@ -45,15 +45,16 @@ $topAuthors = $db->query("
     ORDER BY cnt DESC, u.id ASC LIMIT 10
 ")->fetchAll();
 
-// Популярные темы
+// Популярные темы (вес и счётчик — по видимым ответам)
 $popTopics = $db->query("
-    SELECT t.id, t.title, t.replies_count, t.views_count, u.username
+    SELECT t.id, t.title, t.views_count, u.username,
+           (SELECT COUNT(*) FROM posts vp WHERE vp.topic_id = t.id AND vp.is_hidden = 0) AS visible_replies
     FROM topics t
     JOIN users u ON u.id = t.user_id
     JOIN forums f ON f.id = t.forum_id
     JOIN categories c ON c.id = f.category_id
     WHERE t.is_hidden = 0 AND f.is_active = 1 AND c.is_active = 1
-    ORDER BY (t.replies_count * 2 + t.views_count / 10) DESC, t.id DESC LIMIT 10
+    ORDER BY ((SELECT COUNT(*) FROM posts vp WHERE vp.topic_id = t.id AND vp.is_hidden = 0) * 2 + t.views_count / 10) DESC, t.id DESC LIMIT 10
 ")->fetchAll();
 
 // Активность за 14 дней
@@ -182,7 +183,7 @@ require_once __DIR__ . '/includes/header.php';
         <?php foreach ($popTopics as $t): ?>
             <a href="/topic.php?id=<?= (int)$t['id'] ?>" class="activity-row">
                 <div class="activity-title"><?= escape($t['title']) ?></div>
-                <div class="activity-meta"><?= escape($t['username']) ?> · <?= (int)$t['replies_count'] ?> ответов · <?= (int)$t['views_count'] ?> просмотров</div>
+                <div class="activity-meta"><?= escape($t['username']) ?> · <?= (int)$t['visible_replies'] ?> ответов · <?= (int)$t['views_count'] ?> просмотров</div>
             </a>
         <?php endforeach; ?>
     </div>
@@ -211,7 +212,7 @@ require_once __DIR__ . '/includes/header.php';
     <div class="online-summary">
         Всего: <strong><?= $online['count'] ?></strong> участников
         <?php if ($online['guests']): ?> и <strong><?= $online['guests'] ?></strong> гостей<?php endif; ?>
-        <span class="muted small">(активность за последние 15 минут)</span>
+        <span class="muted small">(активность за последние <?= (int)ceil(ONLINE_WINDOW / 60) ?> мин.)</span>
     </div>
     <?php if (empty($online['users'])): ?>
         <p class="rating-empty">Никого нет онлайн</p>

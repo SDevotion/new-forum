@@ -18,7 +18,11 @@ $offset = ($page - 1) * $perPage;
 
 $where = ["is_active = 1"];
 $params = [];
-if ($q !== '') { $where[] = "username LIKE ?"; $params[] = "$q%"; }
+if ($q !== '') {
+    $qLike = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q);
+    $where[] = "username LIKE ?";
+    $params[] = $qLike . '%';
+}
 $whereSql = 'WHERE ' . implode(' AND ', $where);
 
 $order = [

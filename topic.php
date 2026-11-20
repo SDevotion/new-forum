@@ -36,9 +36,10 @@ if (!$topic || ($topic['is_hidden'] && !$isStaff)) {
     exit;
 }
 
-// Счётчик просмотров (не чаще раза за сессию)
+// Счётчик просмотров (не чаще раза за сессию; автор и стафф не считаются)
 $viewedKey = 'viewed_topics';
-if (!isset($_SESSION[$viewedKey][$topicId])) {
+$isAuthorView = isLoggedIn() && (int)$_SESSION['user_id'] === (int)$topic['user_id'];
+if (!$isStaff && !$isAuthorView && !isset($_SESSION[$viewedKey][$topicId])) {
     $db->prepare("UPDATE topics SET views_count = views_count + 1 WHERE id = ?")->execute([$topicId]);
     $_SESSION[$viewedKey][$topicId] = true;
     $topic['views_count']++;
@@ -223,7 +224,6 @@ require_once __DIR__ . '/includes/header.php';
         <?php
         $number = $offset + $index + 1;
         $isOwner = $currentUser && (int)$post['user_id'] === (int)$currentUser['id'];
-        $isStaff = $currentUser && in_array($currentUser['role'], ['moderator', 'admin'], true);
         ?>
         <div class="post-card <?= $post['is_hidden'] ? 'post-hidden' : '' ?>" id="post-<?= (int)$post['id'] ?>">
             <div class="post-author">

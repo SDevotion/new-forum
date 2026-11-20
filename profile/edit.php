@@ -45,7 +45,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!password_verify($old, $hash)) {
                 $passErrors[] = 'Текущий пароль указан неверно';
             }
-            if (strlen($new) < setting('password_min', 6)) {
+            if (mb_strlen($new) < setting('password_min', 6)) {
                 $passErrors[] = 'Новый пароль должен содержать минимум ' . setting('password_min', 6) . ' символов';
             }
             if ($new !== $confirm) {

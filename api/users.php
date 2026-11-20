@@ -7,6 +7,8 @@ if (!isLoggedIn()) { echo '[]'; exit; }
 
 $q = trim($_GET['q'] ?? '');
 if ($q === '' || mb_strlen($q) > 20) { echo '[]'; exit; }
+// Имя пользователя содержит только [a-zA-Z0-9_] — '_' в LIKE является wildcard
+$qLike = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q);
 
 $db = Database::getInstance()->getConnection();
 $stmt = $db->prepare("
@@ -14,7 +16,7 @@ $stmt = $db->prepare("
     WHERE is_active = 1 AND username LIKE ?
     ORDER BY posts_total DESC LIMIT " . max(1, setting('per_page_autocomplete', 5)) . "
 ");
-$stmt->execute([$q . '%']);
+$stmt->execute([$qLike . '%']);
 $rows = $stmt->fetchAll();
 
 foreach ($rows as &$r) {

@@ -13,7 +13,7 @@ $db = Database::getInstance()->getConnection();
 $uid = (int)$_SESSION['user_id'];
 $action = $_POST['action'] ?? '';
 $back = $_POST['back'] ?? '/notifications.php';
-if (!preg_match('#^/[A-Za-z0-9_./?=&#%-]*$#', $back)) $back = '/notifications.php';
+if (!preg_match('~^/[A-Za-z0-9_./?=&#%-]*$~', $back)) $back = '/notifications.php';
 
 try {
     if ($action === 'read_all') {
@@ -58,7 +58,15 @@ try {
                 $st = $db->prepare("SELECT created_at, is_hidden FROM posts WHERE id = ? AND topic_id = ?");
                 $st->execute([$postId, $topicId]);
                 $p = $st->fetch();
-                if ($p && (!$p['is_hidden'] || $staffFlag)) {
+                if ($p && $p['is_hidden'] && !$staffFlag) {
+                    setFlashMessage('info', 'Сообщение скрыто модератором');
+                    redirect($back);
+                }
+                if (!$p) {
+                    setFlashMessage('info', 'Сообщение было удалено');
+                    redirect($url);
+                }
+                if ($p) {
                     $st = $db->prepare("
                         SELECT COUNT(*) FROM posts
                         WHERE topic_id = ? AND (is_hidden = 0 OR ? = 1)

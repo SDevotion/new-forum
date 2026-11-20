@@ -39,7 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         if (empty($password)) {
             $errors[] = 'Введите пароль';
-        } elseif (strlen($password) < setting('password_min', 6)) {
+        } elseif (mb_strlen($password) < setting('password_min', 6)) {
             $errors[] = 'Пароль должен содержать минимум ' . setting('password_min', 6) . ' символов';
         }
         

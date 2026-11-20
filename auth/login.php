@@ -32,7 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             
             if ($user && password_verify($password, $user['password_hash'])) {
                 if (!$user['is_active']) {
-                    $errors[] = 'Ваш аккаунт заблокирован';
+                    $errors[] = 'Неверное имя пользователя или пароль';
                 } else {
                     // Успешный вход — сбрасываем счётчик попыток для этого IP
                     $stmt = $db->prepare("DELETE FROM rate_limits WHERE action = 'login' AND actor_key = ?");

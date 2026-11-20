@@ -6,6 +6,7 @@
 
 function mdRender($text) {
     $text = str_replace(["\r\n", "\r"], "\n", (string)$text);
+    $text = str_replace("\x00", '', $text); // нельзя подделать служебные плейсхолдеры кода
     $text = htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
 
     // Блоки кода ``` ... ```

@@ -32,3 +32,9 @@ ForceType application/octet-stream
 <FilesMatch "\.(jpg|jpeg|png|gif|webp)$">
     ForceType none
 </FilesMatch>
+
+# Вложения — только через /attachment.php (ACL). Прямые URL запрещены.
+# Аватары (avatars/) остаются публичной статикой.
+RewriteEngine On
+RewriteCond %{REQUEST_URI} !^/assets/uploads/avatars/ [NC]
+RewriteRule ^attachments/ - [F,L]

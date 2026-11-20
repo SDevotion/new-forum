@@ -15,7 +15,12 @@ $offset = ($page - 1) * $perPage;
 
 $where = [];
 $params = [];
-if ($q !== '') { $where[] = "(username LIKE ? OR email LIKE ?)"; $params[] = "%$q%"; $params[] = "%$q%"; }
+if ($q !== '') {
+    $qLike = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q) . '%';
+    $where[] = "(username LIKE ? OR email LIKE ?)";
+    $params[] = $qLike;
+    $params[] = $qLike;
+}
 if (in_array($roleFilter, ['user', 'moderator', 'admin'], true)) { $where[] = "role = ?"; $params[] = $roleFilter; }
 $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 

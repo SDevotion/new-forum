@@ -49,6 +49,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             setFlashMessage('success', 'Счётчики пересчитаны');
             break;
 
+        case 'clean_orphan_records':
+            $n1 = $db->exec("
+                DELETE e FROM post_edits e
+                LEFT JOIN topics t ON e.target_type = 'topic' AND t.id = e.target_id
+                LEFT JOIN posts p  ON e.target_type = 'post'  AND p.id = e.target_id
+                WHERE t.id IS NULL AND p.id IS NULL
+            ");
+            $n2 = $db->exec("
+                DELETE r FROM reports r
+                LEFT JOIN topics t ON r.target_type = 'topic' AND t.id = r.target_id
+                LEFT JOIN posts p  ON r.target_type = 'post'  AND p.id = r.target_id
+                WHERE t.id IS NULL AND p.id IS NULL
+            ");
+            logModeration('maint_clean', 'forum', 0, "orphan records: edits=$n1, reports=$n2");
+            setFlashMessage('success', "Удалено записей без целей: правок — $n1, жалоб — $n2");
+            break;
+
         case 'clean_ratelimits':
             $n = $db->exec("DELETE FROM rate_limits WHERE created_at < NOW() - INTERVAL 1 DAY");
             logModeration('maint_clean', 'forum', 0, "rate_limits: $n");
@@ -184,6 +201,12 @@ adminOpen('maintenance');
     </div>
     <div class="admin-card">
         <h3>Очистка данных</h3>
+        <form method="POST" class="admin-clean-row js-confirm-maint">
+            <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
+            <input type="hidden" name="op" value="clean_orphan_records">
+            <span>Правки и жалобы на удалённые темы/сообщения</span>
+            <button class="btn btn-sm btn-outline">Очистить</button>
+        </form>
         <form method="POST" class="admin-clean-row">
             <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
             <input type="hidden" name="op" value="clean_ratelimits">

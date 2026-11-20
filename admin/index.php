@@ -15,14 +15,19 @@ $counts = [
 $newUsers7 = (int)$db->query("SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL 7 DAY")->fetchColumn();
 $banned = (int)$db->query("SELECT COUNT(*) FROM users WHERE is_active = 0")->fetchColumn();
 
-// Размер каталога вложений
+// Размер каталога загрузок (рекурсивно: attachments/, avatars/)
 $uploadDir = __DIR__ . '/../assets/uploads';
 $uploadSize = 0; $uploadFiles = 0;
 if (is_dir($uploadDir)) {
-    foreach (@scandir($uploadDir) ?: [] as $fn) {
-        if ($fn === '.' || $fn === '..') continue;
-        $fp = $uploadDir . '/' . $fn;
-        if (is_file($fp)) { $uploadSize += filesize($fp); $uploadFiles++; }
+    $it = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($uploadDir, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::LEAVES_ONLY
+    );
+    foreach ($it as $fp) {
+        if ($fp->isFile() && $fp->getFilename() !== '.htaccess') {
+            $uploadSize += $fp->getSize();
+            $uploadFiles++;
+        }
     }
 }
 

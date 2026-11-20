@@ -60,6 +60,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt->execute([password_hash($new, PASSWORD_DEFAULT), $userId]);
 
                 session_regenerate_id(true);
+                unset($_SESSION['csrf_token']); // новый CSRF-токен после смены пароля
+                generateCSRFToken();
                 setFlashMessage('success', 'Пароль успешно изменён');
                 redirect('/profile/edit.php');
             }

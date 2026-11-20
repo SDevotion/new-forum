@@ -76,9 +76,26 @@ try {
         }
 
         case 'topic_delete': {
+            $stmt = $db->prepare("SELECT id FROM topics WHERE id = ?");
+            $stmt->execute([$id]);
+            if (!$stmt->fetch()) done('Тема не найдена', $back, 'error');
+
             $attachNames = attachCollectTopicTree($id);
+            $db->beginTransaction();
             attachPurgeTopicTree($id);
+            // истории правок и жалобы темы и её ответов (FK на target нет — чистим вручную)
+            $db->prepare("
+                DELETE FROM post_edits
+                WHERE (target_type = 'topic' AND target_id = ?)
+                   OR (target_type = 'post' AND target_id IN (SELECT id FROM posts WHERE topic_id = ?))
+            ")->execute([$id, $id]);
+            $db->prepare("
+                DELETE FROM reports
+                WHERE (target_type = 'topic' AND target_id = ?)
+                   OR (target_type = 'post' AND target_id IN (SELECT id FROM posts WHERE topic_id = ?))
+            ")->execute([$id, $id]);
             $db->prepare("DELETE FROM topics WHERE id = ?")->execute([$id]);
+            $db->commit();
             foreach ($attachNames as $sn) attachUnlink($sn);
             logModeration('topic_delete', 'topic', $id, $reason);
             done('Тема удалена', '/index.php');

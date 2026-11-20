@@ -23,14 +23,28 @@ $reports = $db->query("
     LIMIT " . max(1, setting('per_page_staff', 15)) . "
 ")->fetchAll();
 
+// Превью целей — двумя пакетными запросами вместо запроса на каждую жалобу
+$topicIds = []; $postIds = [];
+foreach ($reports as $r) {
+    if ($r['target_type'] === 'topic') $topicIds[] = (int)$r['target_id'];
+    else $postIds[] = (int)$r['target_id'];
+}
+$topicMap = []; $postMap = [];
+if ($topicIds) {
+    $in = implode(',', array_fill(0, count($topicIds), '?'));
+    $st = $db->prepare("SELECT id, title AS preview, id AS link_id FROM topics WHERE id IN ($in)");
+    $st->execute($topicIds);
+    foreach ($st->fetchAll() as $row) $topicMap[(int)$row['id']] = $row;
+}
+if ($postIds) {
+    $in = implode(',', array_fill(0, count($postIds), '?'));
+    $st = $db->prepare("SELECT id, content AS preview, topic_id AS link_id FROM posts WHERE id IN ($in)");
+    $st->execute($postIds);
+    foreach ($st->fetchAll() as $row) $postMap[(int)$row['id']] = $row;
+}
 foreach ($reports as &$r) {
-    if ($r['target_type'] === 'topic') {
-        $st = $db->prepare("SELECT title AS preview, id AS link_id FROM topics WHERE id = ?");
-    } else {
-        $st = $db->prepare("SELECT content AS preview, topic_id AS link_id FROM posts WHERE id = ?");
-    }
-    $st->execute([$r['target_id']]);
-    $r['target'] = $st->fetch() ?: null;
+    $tid = (int)$r['target_id'];
+    $r['target'] = $r['target_type'] === 'topic' ? ($topicMap[$tid] ?? null) : ($postMap[$tid] ?? null);
 }
 unset($r);
 

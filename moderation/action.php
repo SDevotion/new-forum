@@ -136,10 +136,13 @@ try {
             $stmt->execute([$id]);
             $r = $stmt->fetch();
 
-            $db->prepare("UPDATE reports SET status = ?, handled_by = ?, handled_at = NOW() WHERE id = ? AND status = 'new'")
-               ->execute([$status, $me['id'], $id]);
+            $stmt = $db->prepare("UPDATE reports SET status = ?, handled_by = ?, handled_at = NOW() WHERE id = ? AND status = 'new'");
+            $stmt->execute([$status, $me['id'], $id]);
 
-            if ($r) logModeration($action, $r['target_type'], (int)$r['target_id'], $reason);
+            if ($stmt->rowCount() === 0) {
+                done($r ? 'Жалоба уже обработана другим модератором' : 'Жалоба не найдена', $back, 'info');
+            }
+            logModeration($action, $r['target_type'], (int)$r['target_id'], $reason);
             done($status === 'resolved' ? 'Жалоба принята' : 'Жалоба отклонена', $back);
             break;
         }

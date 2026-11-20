@@ -8,7 +8,7 @@ const FG = Object.assign({
 
 // ===== Markdown -> HTML (клиентский предпросмотр) =====
 function mdToHtml(src) {
-    let text = String(src).replace(/\r\n?/g, '\n');
+    let text = String(src).replace(/\r\n?/g, '\n').replace(/\u0000/g, '');
     const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
                       .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
     text = esc(text);
@@ -777,7 +777,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }, observerOptions);
     
-    const animatedElements = document.querySelectorAll('.feature-card, .stat-card');
+    const animatedElements = document.querySelectorAll('.stat-card');
     animatedElements.forEach(el => {
         el.style.opacity = '0';
         el.style.transform = 'translateY(20px)';

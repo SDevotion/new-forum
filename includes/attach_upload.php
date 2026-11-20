@@ -6,7 +6,7 @@
 $attachExisting = $attachExisting ?? [];
 if (attachMaxFiles() === 0 && !$attachExisting) return; // загрузка отключена
 ?>
-<div class="attach-upload" data-max-files="<?= attachMaxFiles() ?>" data-max-size="<?= attachMaxSize() ?>">
+<div class="attach-upload" data-max-files="<?= attachMaxFiles() ?>" data-max-size="<?= attachMaxSize() ?>" data-existing="<?= count($attachExisting) ?>">
     <label class="attach-upload-label">📎 Вложения</label>
     <?php if ($attachExisting): ?>
         <div class="attach-existing">

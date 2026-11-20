@@ -104,16 +104,19 @@ function attachNormalizeFiles($field = 'attachments') {
 /**
  * Валидация списка файлов ДО сохранения. Возвращает массив ошибок (пустой = всё ок).
  * Проверенные файлы получают ключи 'ext' и 'mime'.
+ * $existingCount — сколько вложений уже есть у объекта и останется после правки.
  */
-function attachValidate(array &$files) {
+function attachValidate(array &$files, $existingCount = 0) {
     $errors = [];
     $maxFiles = attachMaxFiles();
     if ($files && $maxFiles === 0) {
         $errors[] = 'Загрузка вложений отключена администратором';
         return $errors;
     }
-    if (count($files) > $maxFiles) {
-        $errors[] = 'Можно прикрепить не более ' . $maxFiles . ' файлов';
+    $slots = max(0, $maxFiles - (int)$existingCount);
+    if (count($files) > $slots) {
+        $errors[] = 'Можно прикрепить не более ' . $maxFiles . ' файлов на сообщение'
+                  . ((int)$existingCount > 0 ? ' (уже прикреплено: ' . (int)$existingCount . ')' : '');
         return $errors;
     }
     $allowed = attachAllowedTypes();

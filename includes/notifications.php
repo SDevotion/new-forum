@@ -35,17 +35,18 @@ function notifyUser($userId, $type, $actorId, $topicId, $postId, $excerpt = null
 }
 
 /**
- * Извлечение имён из @упоминаний и [quote=...]
+ * Извлечение имён из @упоминаний и [quote=...] с указанием источника.
+ * Возвращает [name => 'mention'|'quote']; mention приоритетнее quote.
  */
 function parseMentions($text) {
     $names = [];
-    if (preg_match_all('/@([a-zA-Z0-9_]{3,50})/u', (string)$text, $m)) {
-        $names = array_merge($names, $m[1]);
-    }
     if (preg_match_all('/\[quote=([^\]\n]{1,60})\]/u', (string)$text, $m)) {
-        $names = array_merge($names, $m[1]);
+        foreach ($m[1] as $name) $names[$name] = 'quote';
     }
-    return array_values(array_unique($names));
+    if (preg_match_all('/@([a-zA-Z0-9_]{3,50})/u', (string)$text, $m)) {
+        foreach ($m[1] as $name) $names[$name] = 'mention';
+    }
+    return $names;
 }
 
 /**
@@ -75,12 +76,12 @@ function notifyTopicReply($topicId, $postId, $actorId, $content) {
     $excerpt = mdExcerptSafe($content);
     $notified = [$actorId];
 
-    foreach (parseMentions($content) as $name) {
+    foreach (parseMentions($content) as $name => $kind) {
         $stmt = $db->prepare("SELECT id FROM users WHERE username = ? AND is_active = 1");
         $stmt->execute([$name]);
         $uid = (int)$stmt->fetchColumn();
         if (!$uid || in_array($uid, $notified, true)) continue;
-        notifyUser($uid, 'mention', $actorId, $topicId, $postId, $excerpt);
+        notifyUser($uid, $kind, $actorId, $topicId, $postId, $excerpt);
         $notified[] = $uid;
     }
 

@@ -49,7 +49,8 @@ function getOnlineList() {
         LIMIT 100
     ")->fetchAll();
 
-    // Гости — приблизительно, по свежим файлам сессий (только файловый обработчик; кэш на запрос)
+    // Гости — приблизительно, по свежим файлам сессий БЕЗ user_id
+    // (только файловый обработчик; кэш на запрос)
     static $guestFiles = null;
     if ($guestFiles === null) {
         $guestFiles = 0;
@@ -60,13 +61,15 @@ function getOnlineList() {
                 if ($files) {
                     $cut = time() - ONLINE_WINDOW;
                     foreach ($files as $f) {
-                        if (@filemtime($f) >= $cut) $guestFiles++;
+                        if (@filemtime($f) < $cut) continue;
+                        $data = @file_get_contents($f);
+                        if ($data !== false && strpos($data, 'user_id|') === false) $guestFiles++;
                     }
                 }
             }
         }
     }
-    $guests = max(0, $guestFiles - count($users));
+    $guests = $guestFiles;
 
     return ['users' => $users, 'count' => count($users), 'guests' => $guests];
 }
@@ -84,8 +87,8 @@ function getForumTotals() {
         'posts'  => (int)$db->query("SELECT COUNT(*) FROM posts WHERE is_hidden = 0")->fetchColumn(),
         'users'  => (int)$db->query("SELECT COUNT(*) FROM users WHERE is_active = 1")->fetchColumn(),
         'newest' => $db->query("SELECT id, username FROM users WHERE is_active = 1 ORDER BY id DESC LIMIT 1")->fetch(),
-        'today_posts'  => (int)$db->query("SELECT COUNT(*) FROM posts WHERE created_at >= CURDATE()")->fetchColumn(),
-        'today_topics' => (int)$db->query("SELECT COUNT(*) FROM topics WHERE created_at >= CURDATE()")->fetchColumn(),
+        'today_posts'  => (int)$db->query("SELECT COUNT(*) FROM posts WHERE is_hidden = 0 AND created_at >= CURDATE()")->fetchColumn(),
+        'today_topics' => (int)$db->query("SELECT COUNT(*) FROM topics WHERE is_hidden = 0 AND created_at >= CURDATE()")->fetchColumn(),
         'today_users'  => (int)$db->query("SELECT COUNT(*) FROM users WHERE created_at >= CURDATE()")->fetchColumn(),
     ];
 

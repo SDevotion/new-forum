@@ -4,8 +4,16 @@
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/settings.php';
 
-// Запуск сессии
+// Запуск сессии с защищёнными cookie
 if (session_status() === PHP_SESSION_NONE) {
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path'     => '/',
+        'domain'   => '',
+        'secure'   => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
     session_start();
 }
 
@@ -34,7 +42,22 @@ function getCurrentUser() {
         // Если пользователь не найден или заблокирован - разлогиниваем
         if (!$user) {
             $_SESSION = [];
+            if (isset($_COOKIE[session_name()])) {
+                $p = session_get_cookie_params();
+                setcookie(session_name(), '', [
+                    'expires'  => time() - 3600,
+                    'path'     => $p['path'],
+                    'domain'   => $p['domain'],
+                    'secure'   => $p['secure'],
+                    'httponly' => $p['httponly'],
+                    'samesite' => $p['samesite'] ?: 'Lax',
+                ]);
+            }
             session_destroy();
+            // Новая короткая сессия только для flash-сообщения
+            session_start();
+            session_regenerate_id(true);
+            setFlashMessage('info', 'Сессия завершена: аккаунт недоступен');
             header('Location: /index.php');
             exit;
         }

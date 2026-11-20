@@ -3,7 +3,7 @@ require_once __DIR__ . '/permissions.php';
 
 /**
  * Может ли текущий пользователь редактировать объект.
- * Модератор — всегда, автор — в течение 24 часов.
+ * Модератор — всегда, автор — в течение окна edit_window_hours (по умолчанию 24 ч).
  */
 function canEdit($ownerId, $createdAt) {
     $u = getCurrentUser();

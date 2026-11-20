@@ -1,5 +1,24 @@
 <?php
 require_once __DIR__ . '/functions.php';
+require_once __DIR__ . '/permissions.php';
+
+/**
+ * SQL-условие: уведомление ведёт на доступный текущему пользователю контент.
+ * Модерационные уведомления видны всегда; контентные — только если тема/пост
+ * не скрыты (стафф видит всё) и раздел активен. Алиас таблицы: n.
+ */
+function notifVisibilityCond() {
+    $staff = isModerator() ? 1 : 0;
+    return " AND (n.type = 'moderation' OR (
+        EXISTS (SELECT 1 FROM topics t
+                JOIN forums f ON f.id = t.forum_id
+                JOIN categories c ON c.id = f.category_id
+                WHERE t.id = n.topic_id AND f.is_active = 1 AND c.is_active = 1
+                  AND (t.is_hidden = 0 OR $staff = 1))
+        AND (n.post_id IS NULL OR EXISTS (SELECT 1 FROM posts p
+                WHERE p.id = n.post_id AND (p.is_hidden = 0 OR $staff = 1)))
+    ))";
+}
 
 /**
  * Создание одного уведомления с учётом настроек получателя
@@ -110,7 +129,8 @@ function unreadCount() {
     if (!isLoggedIn()) return $c = 0;
 
     $db = Database::getInstance()->getConnection();
-    $stmt = $db->prepare("SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0");
+    $vis = notifVisibilityCond();
+    $stmt = $db->prepare("SELECT COUNT(*) FROM notifications n WHERE n.user_id = ? AND n.is_read = 0 $vis");
     $stmt->execute([$_SESSION['user_id']]);
     return $c = (int)$stmt->fetchColumn();
 }

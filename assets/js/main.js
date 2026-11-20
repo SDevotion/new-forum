@@ -656,6 +656,17 @@ document.addEventListener('DOMContentLoaded', function() {
         const maxSize = parseInt(box.dataset.maxSize, 10) || 5242880;
         if (!input || !list) return;
 
+        // Сколько старых вложений останется (с учётом отмеченных «удалить»)
+        const remainingExisting = () => {
+            const boxes = box.querySelectorAll('input[name="attach_remove[]"]');
+            let kept = 0;
+            boxes.forEach(cb => { if (!cb.checked) kept++; });
+            return kept;
+        };
+        const slots = () => Math.max(0, maxFiles - remainingExisting());
+        box.querySelectorAll('input[name="attach_remove[]"]').forEach(cb =>
+            cb.addEventListener('change', render));
+
         const fmt = b => b >= 1048576 ? (b / 1048576).toFixed(1) + ' МБ'
                        : b >= 1024 ? (b / 1024).toFixed(1) + ' КБ' : b + ' Б';
 
@@ -690,10 +701,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 row.appendChild(size);
                 list.appendChild(row);
             });
-            if (files.length > maxFiles) {
+            const free = slots();
+            if (files.length > free) {
                 const warn = document.createElement('div');
                 warn.className = 'attach-selected-bad';
-                warn.textContent = 'Выбрано ' + files.length + ' файлов, максимум ' + maxFiles;
+                warn.textContent = 'Выбрано ' + files.length + ' файлов, можно добавить ещё ' + free + ' (лимит ' + maxFiles + ' на сообщение)';
                 list.appendChild(warn);
             }
         }
@@ -706,7 +718,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 const files = Array.from(input.files);
                 if (!files.length) return;
                 let errors = [];
-                if (files.length > maxFiles) errors.push('Можно прикрепить не более ' + maxFiles + ' файлов');
+                const free = slots();
+                if (files.length > free) errors.push('Можно прикрепить не более ' + maxFiles + ' файлов на сообщение (можно добавить ещё ' + free + ')');
                 files.forEach(f => {
                     if (f.size > maxSize) errors.push('«' + f.name + '» больше ' + fmt(maxSize));
                 });

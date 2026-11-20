@@ -15,9 +15,17 @@ $flash = ['type' => 'info', 'message' => 'Вы успешно вышли из с
 $_SESSION = [];
 session_destroy();
 
-// Очистка cookie сессии
+// Очистка cookie сессии (с теми же параметрами, с которыми она ставилась)
 if (isset($_COOKIE[session_name()])) {
-    setcookie(session_name(), '', time() - 3600, '/');
+    $p = session_get_cookie_params();
+    setcookie(session_name(), '', [
+        'expires'  => time() - 3600,
+        'path'     => $p['path'],
+        'domain'   => $p['domain'],
+        'secure'   => $p['secure'],
+        'httponly' => $p['httponly'],
+        'samesite' => $p['samesite'] ?: 'Lax',
+    ]);
 }
 
 // Новая короткая сессия только для flash-сообщения

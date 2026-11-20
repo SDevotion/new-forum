@@ -24,15 +24,31 @@ $forumsStmt = $db->prepare("
                    + (SELECT COUNT(*) FROM posts vp JOIN topics vt ON vt.id = vp.topic_id
                       WHERE vt.forum_id = f.id AND vt.is_hidden = 0 AND vp.is_hidden = 0)
            END AS visible_posts_count,
-           lp.content   AS last_content,
-           lp.created_at AS last_date,
-           lu.username  AS last_username,
-           lt.id        AS last_topic_id,
-           lt.title     AS last_topic_title
+           la.last_date,
+           la.last_username,
+           la.last_topic_id,
+           la.last_topic_title
     FROM forums f
-    LEFT JOIN posts lp ON lp.id = f.last_post_id AND (lp.is_hidden = 0 OR ? = 1)
-    LEFT JOIN users lu ON lu.id = lp.user_id
-    LEFT JOIN topics lt ON lt.id = lp.topic_id AND (lt.is_hidden = 0 OR ? = 1)
+    LEFT JOIN LATERAL (
+        SELECT x.created_at AS last_date, x.username AS last_username,
+               x.topic_id AS last_topic_id, x.title AS last_topic_title
+        FROM (
+            SELECT p.created_at, u.username, t.id AS topic_id, t.title, 1 AS prio
+            FROM posts p
+            JOIN topics t ON t.id = p.topic_id
+            JOIN users u ON u.id = p.user_id
+            WHERE t.forum_id = f.id AND (p.is_hidden = 0 OR ? = 1) AND (t.is_hidden = 0 OR ? = 1)
+            UNION ALL
+            SELECT t.created_at, u.username, t.id, t.title, 2 AS prio
+            FROM topics t
+            JOIN users u ON u.id = t.user_id
+            WHERE t.forum_id = f.id AND (t.is_hidden = 0 OR ? = 1)
+              AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.topic_id = t.id
+                              AND (p.is_hidden = 0 OR ? = 1))
+        ) x
+        ORDER BY x.created_at DESC, x.prio ASC, x.topic_id DESC
+        LIMIT 1
+    ) la ON TRUE
     WHERE f.category_id = ? AND f.is_active = 1
     ORDER BY f.sort_order ASC, f.id ASC
 ");
@@ -54,7 +70,7 @@ require_once __DIR__ . '/includes/header.php';
 <?php else: ?>
     <?php foreach ($categories as $category): ?>
         <?php
-        $forumsStmt->execute([$staffFlag, $staffFlag, $staffFlag, $staffFlag, $category['id']]);
+        $forumsStmt->execute([$staffFlag, $staffFlag, $staffFlag, $staffFlag, $staffFlag, $staffFlag, $category['id']]);
         $forums = $forumsStmt->fetchAll();
         if (empty($forums)) continue;
         ?>

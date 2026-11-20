@@ -115,7 +115,7 @@ require_once __DIR__ . '/includes/header.php';
     <?php endif; ?>
 
     <div class="topic-meta">
-        <?php if (isLoggedIn()): ?>
+        <?php if (isLoggedIn() && (int)$currentUser['id'] !== (int)$topic['user_id']): ?>
             <button type="button" class="btn-link btn-report" data-type="topic" data-id="<?= $topicId ?>">Пожаловаться на тему</button>
         <?php endif; ?>
         <span>👁 <?= (int)$topic['views_count'] ?> просмотров</span>
@@ -269,7 +269,7 @@ require_once __DIR__ . '/includes/header.php';
                                 data-content="<?= escape($post['content']) ?>">Цитировать</button>
                     <?php endif; ?>
 
-                    <?php if (isLoggedIn()): ?>
+                    <?php if (isLoggedIn() && !$isOwner): ?>
                         <button type="button" class="btn-link btn-report"
                                 data-type="post" data-id="<?= (int)$post['id'] ?>">Пожаловаться</button>
                     <?php endif; ?>

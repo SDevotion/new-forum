@@ -16,7 +16,7 @@ $perPage = max(1, setting('per_page_notifications', 15));
 $page = max(1, (int)($_GET['page'] ?? 1));
 $offset = ($page - 1) * $perPage;
 
-$cond = $filter === 'unread' ? ' AND n.is_read = 0' : '';
+$cond = ($filter === 'unread' ? ' AND n.is_read = 0' : '') . notifVisibilityCond();
 
 $stmt = $db->prepare("SELECT COUNT(*) FROM notifications n WHERE n.user_id = ? $cond");
 $stmt->execute([$uid]);

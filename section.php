@@ -45,12 +45,15 @@ if ($page > $totalPages) {
 
 $stmt = $db->prepare("
     SELECT t.*, u.username, u.avatar, u.id AS author_id,
-           (SELECT lu.username
-            FROM posts lp
-            JOIN users lu ON lu.id = lp.user_id
-            WHERE lp.topic_id = t.id
-            ORDER BY lp.created_at DESC, lp.id DESC
-            LIMIT 1) AS last_username,
+           COALESCE(
+               (SELECT lu.username
+                FROM posts lp
+                JOIN users lu ON lu.id = lp.user_id
+                WHERE lp.topic_id = t.id AND (lp.is_hidden = 0 OR ? = 1)
+                ORDER BY lp.created_at DESC, lp.id DESC
+                LIMIT 1),
+               u.username
+           ) AS last_username,
            (SELECT COUNT(*) FROM posts vp WHERE vp.topic_id = t.id AND (vp.is_hidden = 0 OR ? = 1)) AS visible_replies
     FROM topics t
     JOIN users u ON u.id = t.user_id
@@ -58,7 +61,7 @@ $stmt = $db->prepare("
     ORDER BY t.is_pinned DESC, t.last_post_at DESC, t.id DESC
     LIMIT $perPage OFFSET $offset
 ");
-$stmt->execute([$staff ? 1 : 0, $forumId, $staff ? 1 : 0]);
+$stmt->execute([$staff ? 1 : 0, $staff ? 1 : 0, $forumId, $staff ? 1 : 0]);
 $topics = $stmt->fetchAll();
 
 require_once __DIR__ . '/includes/header.php';

@@ -1855,6 +1855,8 @@ h3.md-h{font-size:19px}h4.md-h{font-size:17px}h5.md-h{font-size:15px}h6.md-h{fon
 .attach-input{display:block;width:100%;font-size:14px;margin-bottom:8px}
 .attach-selected{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
 .attach-selected-item{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--color-gray-700)}
+.attach-selected-remove{margin-left:auto;flex:none;width:22px;height:22px;line-height:1;border:1px solid var(--color-gray-200);border-radius:var(--radius-sm);background:var(--color-white);color:var(--color-gray-700);font-size:15px;cursor:pointer;padding:0}
+.attach-selected-remove:hover{border-color:var(--color-error);color:var(--color-error);background:#fef2f2}
 .attach-selected-thumb{width:40px;height:40px;object-fit:cover;border-radius:var(--radius-sm);border:1px solid var(--color-gray-200)}
 .attach-selected-bad{color:var(--color-error)}
 .attach-existing{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}

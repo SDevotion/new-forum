@@ -13,7 +13,7 @@ $action = $_POST['action'] ?? '';
 $reason = trim($_POST['reason'] ?? '');
 $id = (int)($_POST['id'] ?? 0);
 $back = $_POST['back'] ?? '/moderation/index.php';
-if (!preg_match('#^/[A-Za-z0-9_./?=&#%-]*$#', $back)) $back = '/moderation/index.php';
+if (!preg_match('~^/[A-Za-z0-9_./?=&#%-]*$~', $back)) $back = '/moderation/index.php';
 
 function done($msg, $back, $type = 'success') { setFlashMessage($type, $msg); redirect($back); }
 
@@ -31,6 +31,10 @@ try {
 
             $new = $row['val'] ? 0 : 1;
             $db->prepare("UPDATE topics SET `$col` = ? WHERE id = ?")->execute([$new, $id]);
+            // Скрытая тема: убираем уведомления, ведущие в неё (кроме модерационных)
+            if ($action === 'topic_hide' && $new) {
+                $db->prepare("DELETE FROM notifications WHERE topic_id = ? AND type <> 'moderation'")->execute([$id]);
+            }
             logModeration($action . ($new ? '_on' : '_off'), 'topic', $id, $reason);
 
             $names = ['topic_pin' => 'закреплена', 'topic_close' => 'закрыта', 'topic_hide' => 'скрыта'];
@@ -110,6 +114,10 @@ try {
 
             $new = $row['is_hidden'] ? 0 : 1;
             $db->prepare("UPDATE posts SET is_hidden = ? WHERE id = ?")->execute([$new, $id]);
+            // Скрытый пост: убираем уведомления о нём (кроме модерационных)
+            if ($new) {
+                $db->prepare("DELETE FROM notifications WHERE post_id = ? AND type <> 'moderation'")->execute([$id]);
+            }
             logModeration($new ? 'post_hide' : 'post_unhide', 'post', $id, $reason);
 
             if ($new) {

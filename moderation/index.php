@@ -56,22 +56,7 @@ $log = $db->query("
     LIMIT " . max(1, setting('per_page_staff', 15)) . "
 ")->fetchAll();
 
-$actionNames = [
-    'topic_pin_on' => 'Закрепление темы', 'topic_pin_off' => 'Открепление темы',
-    'topic_close_on' => 'Закрытие темы', 'topic_close_off' => 'Открытие темы',
-    'topic_hide_on' => 'Скрытие темы', 'topic_hide_off' => 'Показ темы',
-    'topic_move' => 'Перенос темы', 'topic_delete' => 'Удаление темы',
-    'post_hide' => 'Скрытие сообщения', 'post_unhide' => 'Показ сообщения',
-    'report_resolve' => 'Жалоба принята', 'report_reject' => 'Жалоба отклонена',
-    'user_ban' => 'Блокировка пользователя', 'user_unban' => 'Разблокировка',
-    'user_role' => 'Смена роли',
-    'restore_revision' => 'Откат версии',
-    'category_add' => 'Создание категории', 'category_toggle' => 'Видимость категории',
-    'category_delete' => 'Удаление категории', 'forum_add' => 'Создание раздела',
-    'forum_toggle' => 'Видимость раздела', 'forum_delete' => 'Удаление раздела',
-    'settings_update' => 'Изменение настроек',
-    'maint_recount' => 'Пересчёт счётчиков', 'maint_clean' => 'Очистка данных',
-];
+$actionNames = moderationActionNames();
 
 require_once __DIR__ . '/../includes/header.php';
 ?>
@@ -167,7 +152,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <td><a href="/profile.php?id=<?= (int)$l['user_id'] ?>"><?= escape($l['username']) ?></a></td>
                     <td><?= escape($actionNames[$l['action']] ?? $l['action']) ?></td>
                     <td><?= escape($l['target_type']) ?> #<?= (int)$l['target_id'] ?></td>
-                    <td class="muted"><?= escape($l['reason'] ?? '—') ?></td>
+                    <td class="muted"><?= escape(moderationReasonLabel($l['reason']) ?: '—') ?></td>
                 </tr>
             <?php endforeach; ?>
             </tbody>

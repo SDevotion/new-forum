@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/permissions.php';
 require_once __DIR__ . '/../includes/markdown.php';
+require_once __DIR__ . '/../includes/pagination.php';
 requireModerator();
 
 $pageTitle = 'Панель модерации';
@@ -14,14 +15,37 @@ $stats = [
     'reports' => (int)$db->query("SELECT COUNT(*) FROM reports WHERE status='new'")->fetchColumn(),
 ];
 
-$reports = $db->query("
+// ===== Жалобы: фильтр по статусу + пагинация =====
+$statusFilter = $_GET['status'] ?? 'new';
+if (!in_array($statusFilter, ['all', 'new', 'resolved', 'rejected'], true)) $statusFilter = 'new';
+
+$perPage = max(1, setting('per_page_staff', 15));
+$page = max(1, (int)($_GET['page'] ?? 1));
+
+$whereSql = $statusFilter === 'all' ? '' : "WHERE r.status = ?";
+$whereParams = $statusFilter === 'all' ? [] : [$statusFilter];
+
+$st = $db->prepare("SELECT COUNT(*) FROM reports r $whereSql");
+$st->execute($whereParams);
+$totalReports = (int)$st->fetchColumn();
+$totalPages = max(1, (int)ceil($totalReports / $perPage));
+if ($page > $totalPages) $page = $totalPages;
+$offset = ($page - 1) * $perPage;
+
+$st = $db->prepare("
     SELECT r.*, u.username AS author, h.username AS handler
     FROM reports r
     JOIN users u ON u.id = r.user_id
     LEFT JOIN users h ON h.id = r.handled_by
-    ORDER BY FIELD(r.status,'new','resolved','rejected'), r.created_at DESC
-    LIMIT " . max(1, setting('per_page_staff', 15)) . "
-")->fetchAll();
+    $whereSql
+    ORDER BY FIELD(r.status,'new','resolved','rejected'), r.created_at DESC, r.id DESC
+    LIMIT $perPage OFFSET $offset
+");
+$st->execute($whereParams);
+$reports = $st->fetchAll();
+
+$reportsBase = '/moderation/index.php?status=' . $statusFilter;
+$reportsBack = escape($reportsBase . '&page=' . $page);
 
 // Превью целей — двумя пакетными запросами вместо запроса на каждую жалобу
 $topicIds = []; $postIds = [];
@@ -83,7 +107,14 @@ require_once __DIR__ . '/../includes/header.php';
     <div class="admin-stat <?= $stats['reports'] ? 'admin-stat-alert' : '' ?>"><span class="admin-stat-value"><?= $stats['reports'] ?></span><span class="admin-stat-label">Новых жалоб</span></div>
 </div>
 
-<h2 class="section-title">Жалобы</h2>
+<h2 class="section-title">Жалобы (<?= $totalReports ?>)</h2>
+
+<div class="tabs">
+    <a href="/moderation/index.php?status=new" class="tab <?= $statusFilter === 'new' ? 'active' : '' ?>">Новые</a>
+    <a href="/moderation/index.php?status=resolved" class="tab <?= $statusFilter === 'resolved' ? 'active' : '' ?>">Принятые</a>
+    <a href="/moderation/index.php?status=rejected" class="tab <?= $statusFilter === 'rejected' ? 'active' : '' ?>">Отклонённые</a>
+    <a href="/moderation/index.php?status=all" class="tab <?= $statusFilter === 'all' ? 'active' : '' ?>">Все</a>
+</div>
 
 <?php if (empty($reports)): ?>
     <div class="empty-state empty-state-sm"><div class="empty-icon">✅</div><h3>Жалоб нет</h3></div>
@@ -120,14 +151,14 @@ require_once __DIR__ . '/../includes/header.php';
                             <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
                             <input type="hidden" name="action" value="report_resolve">
                             <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-                            <input type="hidden" name="back" value="/moderation/index.php">
+                            <input type="hidden" name="back" value="<?= $reportsBack ?>">
                             <button class="btn btn-primary btn-sm">Принять</button>
                         </form>
                         <form method="POST" action="/moderation/action.php" class="inline-form">
                             <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
                             <input type="hidden" name="action" value="report_reject">
                             <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-                            <input type="hidden" name="back" value="/moderation/index.php">
+                            <input type="hidden" name="back" value="<?= $reportsBack ?>">
                             <button class="btn btn-outline btn-sm">Отклонить</button>
                         </form>
                     </div>
@@ -135,6 +166,7 @@ require_once __DIR__ . '/../includes/header.php';
             </div>
         <?php endforeach; ?>
     </div>
+    <?php renderPagination($page, $totalPages, $reportsBase); ?>
 <?php endif; ?>
 
 <h2 class="section-title">Журнал действий</h2>
@@ -158,6 +190,9 @@ require_once __DIR__ . '/../includes/header.php';
             </tbody>
         </table>
     </div>
+    <?php if (isAdmin()): ?>
+        <p><a href="/admin/maintenance.php" class="btn-link">Полный журнал с фильтрами →</a></p>
+    <?php endif; ?>
 <?php endif; ?>
 
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

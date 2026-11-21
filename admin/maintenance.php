@@ -20,35 +20,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     switch ($op) {
         case 'recount':
-            // Счётчики разделов
-            $db->exec("
-                UPDATE forums f
-                SET topics_count = (SELECT COUNT(*) FROM topics t WHERE t.forum_id = f.id),
-                    posts_count  = (SELECT COUNT(*) FROM topics t WHERE t.forum_id = f.id)
-                                 + (SELECT COUNT(*) FROM posts p JOIN topics t ON t.id = p.topic_id WHERE t.forum_id = f.id)
-            ");
-            // last_post_id разделов
-            foreach ($db->query("SELECT id FROM forums")->fetchAll(PDO::FETCH_COLUMN) as $fid) {
-                $st = $db->prepare("
-                    SELECT p.id FROM posts p JOIN topics t ON t.id = p.topic_id
-                    WHERE t.forum_id = ? ORDER BY p.created_at DESC, p.id DESC LIMIT 1
-                ");
-                $st->execute([$fid]);
-                $lastId = $st->fetchColumn() ?: null;
-                $db->prepare("UPDATE forums SET last_post_id = ? WHERE id = ?")->execute([$lastId, $fid]);
-            }
-            // Ответы и last_post_at тем
-            $db->exec("
-                UPDATE topics t
-                SET replies_count = (SELECT COUNT(*) FROM posts p WHERE p.topic_id = t.id),
-                    last_post_at  = COALESCE((SELECT MAX(p.created_at) FROM posts p WHERE p.topic_id = t.id), t.created_at)
-            ");
-            // Счётчики участников
-            $db->exec("
-                UPDATE users u
-                SET topics_total = (SELECT COUNT(*) FROM topics t WHERE t.user_id = u.id),
-                    posts_total  = (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id)
-            ");
+            require_once __DIR__ . '/../includes/counters.php';
+            recountAll();
             logModeration('maint_recount', 'forum', 0);
             setFlashMessage('success', 'Счётчики пересчитаны');
             break;

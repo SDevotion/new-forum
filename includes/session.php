@@ -1,7 +1,8 @@
 <?php
 // includes/session.php — хранение сессий в БД (таблица user_sessions).
-// Оптимизации: запись только при изменении данных или раз в 5 минут;
-// лок удерживается только на чтении, а не на весь запрос.
+// Запись только при изменении данных или раз в 5 минут.
+// Авторизованные сессии сериализуются локом на запись (защита антидубля/CSRF);
+// гостевые — без лока на запись (быстрые просмотры/скачивания).
 
 require_once __DIR__ . '/../config/database.php';
 
@@ -12,8 +13,8 @@ if (!defined('SESSION_REFRESH_INTERVAL')) define('SESSION_REFRESH_INTERVAL', 300
 class DbSessionHandler implements SessionHandlerInterface {
     private $db;
     private $lockName = null;
-    private $lastPayload = null;   // payload, прочитанный в read()
-    private $lastWriteTs = 0;      // когда строка последний раз обновлялась
+    private $lastPayload = null;
+    private $lastWriteTs = 0;
     private $exists = false;
 
     public function __construct() {
@@ -50,7 +51,6 @@ class DbSessionHandler implements SessionHandlerInterface {
 
     public function read($id) {
         try {
-            // Лок только на чтение снапшота — снимается сразу.
             if (!$this->acquireLock($id)) {
                 error_log('Session lock timeout: ' . $id);
                 return '';
@@ -59,7 +59,6 @@ class DbSessionHandler implements SessionHandlerInterface {
                 "SELECT payload, UNIX_TIMESTAMP(updated_ts) AS ts
                  FROM user_sessions WHERE session_token = ? AND expires_at > NOW()"
             );
-            // updated_ts может отсутствовать в старых БД — fallback ниже.
             try {
                 $stmt->execute([$id]);
                 $row = $stmt->fetch();
@@ -91,22 +90,29 @@ class DbSessionHandler implements SessionHandlerInterface {
     }
 
     public function write($id, $data) {
+        $uid = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : 0;
+
+        // Авторизованные действия сериализуем: защита антидубля постов и CSRF-ротации.
+        $needLock = ($uid > 0);
+        if ($needLock && !$this->acquireLock($id)) {
+            error_log('Session write lock timeout: ' . $id);
+            // Не пишем вслепую — лучше потерять обновление сессии, чем создать дубль поста.
+            return false;
+        }
+
         try {
             $now = time();
             $changed = ($data !== $this->lastPayload);
             $stale = ($now - $this->lastWriteTs) >= SESSION_REFRESH_INTERVAL;
 
-            // Нечего писать: данные те же и окно ещё свежее.
             if ($this->exists && !$changed && !$stale) {
                 return true;
             }
 
-            $uid = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : 0;
             $ip = $_SERVER['REMOTE_ADDR'] ?? null;
             $ua = mb_substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 1000);
 
             if ($this->exists && !$changed && $stale) {
-                // Только продление окна — дешёвый UPDATE без перезаписи payload.
                 $stmt = $this->db->prepare(
                     "UPDATE user_sessions SET expires_at = NOW() + INTERVAL ? SECOND, updated_ts = NOW()
                      WHERE session_token = ?"
@@ -114,7 +120,6 @@ class DbSessionHandler implements SessionHandlerInterface {
                 try {
                     $ok = $stmt->execute([SESSION_LIFETIME, $id]);
                 } catch (PDOException $e) {
-                    // Старая схема без updated_ts
                     $stmt = $this->db->prepare(
                         "UPDATE user_sessions SET expires_at = NOW() + INTERVAL ? SECOND WHERE session_token = ?"
                     );
@@ -135,7 +140,6 @@ class DbSessionHandler implements SessionHandlerInterface {
                 try {
                     $ok = $stmt->execute([$uid, $id, $ip, $ua, $data, SESSION_LIFETIME]);
                 } catch (PDOException $e) {
-                    // Старая схема без updated_ts
                     $stmt = $this->db->prepare("
                         INSERT INTO user_sessions (user_id, session_token, ip_address, user_agent, payload, expires_at)
                         VALUES (?, ?, ?, ?, ?, NOW() + INTERVAL ? SECOND)
@@ -157,6 +161,8 @@ class DbSessionHandler implements SessionHandlerInterface {
         } catch (PDOException $e) {
             error_log('Session write error: ' . $e->getMessage());
             return false;
+        } finally {
+            if ($needLock) $this->releaseLock();
         }
     }
 
@@ -174,7 +180,7 @@ class DbSessionHandler implements SessionHandlerInterface {
 
     public function gc($maxLifetime) {
         try {
-            // Пачками, чтобы не держать长 лок на большой таблице.
+            // Пачками, чтобы не держать длинный лок на большой таблице.
             $total = 0;
             do {
                 $n = $this->db->exec("DELETE FROM user_sessions WHERE expires_at < NOW() LIMIT 500");
@@ -188,9 +194,6 @@ class DbSessionHandler implements SessionHandlerInterface {
     }
 }
 
-/**
- * Старт сессии с защищёнными cookie (вызывается из functions.php).
- */
 function sessionBoot() {
     if (session_status() !== PHP_SESSION_NONE) {
         return;

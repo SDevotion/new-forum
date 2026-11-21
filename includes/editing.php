@@ -3,20 +3,25 @@ require_once __DIR__ . '/permissions.php';
 
 /**
  * Может ли текущий пользователь редактировать объект.
- * Модератор — всегда, автор — в течение окна edit_window_hours (по умолчанию 24 ч).
+ * Модератор — всегда. Автор — в течение окна edit_window_hours,
+ * но НЕ скрытый модератором объект и НЕ в закрытой теме.
+ * $flags: ['is_hidden' => bool, 'topic_closed' => bool] (опционально).
  */
-function canEdit($ownerId, $createdAt) {
+function canEdit($ownerId, $createdAt, array $flags = []) {
     $u = getCurrentUser();
     if (!$u) return false;
     if (isModerator()) return true;
     if ((int)$u['id'] !== (int)$ownerId) return false;
+    if (!empty($flags['is_hidden'])) return false;
+    if (!empty($flags['topic_closed'])) return false;
 
     $limit = max(0, setting('edit_window_hours', 24)) * 3600;
     return (time() - strtotime($createdAt)) <= $limit;
 }
 
 /**
- * Сохранение версии перед правкой
+ * Сохранение версии перед правкой.
+ * Храним последние 100 версий объекта — защита от разрастания истории.
  */
 function saveRevision($type, $id, $oldTitle, $oldContent, $reason = null) {
     $u = getCurrentUser();
@@ -27,6 +32,20 @@ function saveRevision($type, $id, $oldTitle, $oldContent, $reason = null) {
         VALUES (?,?,?,?,?,?)
     ");
     $stmt->execute([$type, $id, $u['id'], $oldTitle, $oldContent, $reason ? mb_substr($reason, 0, 255) : null]);
+
+    // Подчищаем самые старые версии сверх лимита
+    $db->prepare("
+        DELETE FROM post_edits
+        WHERE target_type = ? AND target_id = ?
+          AND id NOT IN (
+              SELECT id FROM (
+                  SELECT id FROM post_edits
+                  WHERE target_type = ? AND target_id = ?
+                  ORDER BY created_at DESC, id DESC
+                  LIMIT 100
+              ) keep
+          )
+    ")->execute([$type, $id, $type, $id]);
 }
 
 /**

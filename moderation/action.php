@@ -31,7 +31,6 @@ try {
 
             $new = $row['val'] ? 0 : 1;
             $db->prepare("UPDATE topics SET `$col` = ? WHERE id = ?")->execute([$new, $id]);
-            // Скрытая тема: убираем уведомления, ведущие в неё (кроме модерационных)
             if ($action === 'topic_hide' && $new) {
                 $db->prepare("DELETE FROM notifications WHERE topic_id = ? AND type <> 'moderation'")->execute([$id]);
             }
@@ -44,7 +43,7 @@ try {
 
         case 'topic_move': {
             $forumId = (int)($_POST['forum_id'] ?? 0);
-            $stmt = $db->prepare("SELECT forum_id, replies_count FROM topics WHERE id = ?");
+            $stmt = $db->prepare("SELECT forum_id FROM topics WHERE id = ?");
             $stmt->execute([$id]);
             $t = $stmt->fetch();
             if (!$t) done('Тема не найдена', $back, 'error');
@@ -54,7 +53,12 @@ try {
             if (!$stmt->fetch()) done('Раздел не найден', $back, 'error');
             if ((int)$t['forum_id'] === $forumId) done('Тема уже в этом разделе', $back, 'info');
 
-            $weight = (int)$t['replies_count'] + 1;
+            // Вес — фактический COUNT ответов, а не денормализованный replies_count
+            // (он может дрейфовать из-за каскадных удалений без триггеров).
+            $st = $db->prepare("SELECT COUNT(*) FROM posts WHERE topic_id = ?");
+            $st->execute([$id]);
+            $weight = (int)$st->fetchColumn() + 1;
+
             $db->beginTransaction();
             $db->prepare("UPDATE topics SET forum_id = ? WHERE id = ?")->execute([$forumId, $id]);
             $db->prepare("UPDATE forums SET topics_count = GREATEST(topics_count - 1, 0), posts_count = GREATEST(posts_count - ?, 0) WHERE id = ?")
@@ -87,7 +91,6 @@ try {
             $attachNames = attachCollectTopicTree($id);
             $db->beginTransaction();
             attachPurgeTopicTree($id);
-            // истории правок и жалобы темы и её ответов (FK на target нет — чистим вручную)
             $db->prepare("
                 DELETE FROM post_edits
                 WHERE (target_type = 'topic' AND target_id = ?)
@@ -114,7 +117,6 @@ try {
 
             $new = $row['is_hidden'] ? 0 : 1;
             $db->prepare("UPDATE posts SET is_hidden = ? WHERE id = ?")->execute([$new, $id]);
-            // Скрытый пост: убираем уведомления о нём (кроме модерационных)
             if ($new) {
                 $db->prepare("DELETE FROM notifications WHERE post_id = ? AND type <> 'moderation'")->execute([$id]);
             }
@@ -158,6 +160,13 @@ try {
 
             $new = $target['is_active'] ? 0 : 1;
             $db->prepare("UPDATE users SET is_active = ? WHERE id = ?")->execute([$new, $id]);
+
+            // Бан = немедленная инвалидация ВСЕХ сессий пользователя.
+            // Без этого забаненный продолжал работать через POST/API до рендера страницы.
+            if (!$new) {
+                $db->prepare("DELETE FROM user_sessions WHERE user_id = ?")->execute([$id]);
+            }
+
             logModeration($new ? 'user_unban' : 'user_ban', 'user', $id, $reason);
             done($new ? 'Пользователь разблокирован' : 'Пользователь заблокирован', $back);
             break;
@@ -170,6 +179,8 @@ try {
             if ($id === (int)$me['id']) done('Нельзя менять свою роль', $back, 'error');
 
             $db->prepare("UPDATE users SET role = ? WHERE id = ?")->execute([$role, $id]);
+            // Понижение роли тоже гасим сессии: права применяются мгновенно.
+            $db->prepare("DELETE FROM user_sessions WHERE user_id = ?")->execute([$id]);
             logModeration('user_role', 'user', $id, $role);
             done('Роль обновлена', $back);
             break;

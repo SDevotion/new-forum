@@ -59,7 +59,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt = $db->prepare("UPDATE users SET password_hash = ? WHERE id = ?");
                 $stmt->execute([password_hash($new, PASSWORD_DEFAULT), $userId]);
 
+                // Ротация ID: старая строка user_sessions удаляется, новая запишется в конце запроса
                 session_regenerate_id(true);
+                // Завершаем все остальные сессии пользователя (кроме текущей)
+                $db->prepare("DELETE FROM user_sessions WHERE user_id = ? AND session_token <> ?")
+                   ->execute([$userId, session_id()]);
                 unset($_SESSION['csrf_token']); // новый CSRF-токен после смены пароля
                 generateCSRFToken();
                 setFlashMessage('success', 'Пароль успешно изменён');

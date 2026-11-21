@@ -55,6 +55,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             setFlashMessage('success', "Удалено протухших сессий: $n");
             break;
 
+        case 'clean_resets':
+            $n = $db->exec("DELETE FROM password_resets WHERE expires_at < NOW()");
+            logModeration('maint_clean', 'forum', 0, "Токены сброса пароля: удалено протухших — $n");
+            setFlashMessage('success', "Удалено протухших токенов сброса пароля: $n");
+            break;
+
         case 'clean_searchlog':
             $n = $db->exec("DELETE FROM search_log WHERE created_at < NOW() - INTERVAL 90 DAY");
             logModeration('maint_clean', 'forum', 0, "Журнал поиска: удалено записей — $n");
@@ -94,7 +100,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $removed = 0; $bytes = 0; $skipped = 0;
             foreach (@scandir($dir) ?: [] as $fn) {
                 if ($fn === '.' || $fn === '..' || isset($known[$fn])) continue;
-                if (strpos($fn, 'tmp_') === 0 && time() - filemtime($dir . '/' . $fn) < ORPHAN_GRACE_SECONDS) { $skipped++; continue; }
                 $fp = $dir . '/' . $fn;
                 if (!is_file($fp)) continue;
                 if (time() - filemtime($fp) < ORPHAN_GRACE_SECONDS) { $skipped++; continue; }
@@ -157,6 +162,7 @@ $sizes = [
     'search_log'    => (int)$db->query("SELECT COUNT(*) FROM search_log")->fetchColumn(),
     'notifications' => (int)$db->query("SELECT COUNT(*) FROM notifications WHERE is_read = 1")->fetchColumn(),
     'sessions'      => (int)$db->query("SELECT COUNT(*) FROM user_sessions")->fetchColumn(),
+    'resets'        => (int)$db->query("SELECT COUNT(*) FROM password_resets")->fetchColumn(),
 ];
 
 require_once __DIR__ . '/../includes/header.php';
@@ -206,6 +212,12 @@ adminOpen('maintenance');
             <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
             <input type="hidden" name="op" value="clean_sessions">
             <span>Протухшие сессии user_sessions (<?= $sizes['sessions'] ?> записей всего)</span>
+            <button class="btn btn-sm btn-outline">Очистить</button>
+        </form>
+        <form method="POST" class="admin-clean-row">
+            <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
+            <input type="hidden" name="op" value="clean_resets">
+            <span>Протухшие токены сброса пароля (<?= $sizes['resets'] ?> записей всего)</span>
             <button class="btn btn-sm btn-outline">Очистить</button>
         </form>
     </div>

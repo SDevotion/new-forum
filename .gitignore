@@ -1,0 +1,30 @@
+# Конфиг с реальными кредами (если вынесете из database.php)
+config/local.php
+.env
+
+# Загрузки пользователей (кроме защитного .htaccess и заглушек)
+assets/uploads/attachments/*
+!assets/uploads/attachments/.gitkeep
+assets/uploads/avatars/*
+!assets/uploads/avatars/.gitkeep
+assets/uploads/.stats_cache
+
+# Логи и временные файлы
+*.log
+error_log
+/tmp/
+/cache/
+
+# Зависимости и артефакты
+/vendor/
+composer.lock
+node_modules/
+.phpunit.result.cache
+.phpunit.cache/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db

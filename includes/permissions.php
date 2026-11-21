@@ -39,6 +39,7 @@ function moderationActionNames() {
         'topic_hide_on' => 'Скрытие темы', 'topic_hide_off' => 'Показ темы',
         'topic_move' => 'Перенос темы', 'topic_delete' => 'Удаление темы',
         'post_hide' => 'Скрытие сообщения', 'post_unhide' => 'Показ сообщения',
+        'post_delete' => 'Удаление сообщения',
         'report_resolve' => 'Жалоба принята', 'report_reject' => 'Жалоба отклонена',
         'user_ban' => 'Блокировка пользователя', 'user_unban' => 'Разблокировка',
         'user_role' => 'Смена роли', 'restore_revision' => 'Откат версии',
@@ -79,6 +80,9 @@ function moderationReasonLabel($reason) {
     }
     if (preg_match('/^версия #(\d+)$/u', $reason, $m)) {
         return "Откат к версии #{$m[1]}";
+    }
+    if (preg_match('/^автор #(\d+)$/u', $reason, $m)) {
+        return "Удалено сообщение автора #{$m[1]}";
     }
     if (in_array($reason, ['user', 'moderator', 'admin'], true)) {
         return 'Новая роль: ' . ['user' => 'Участник', 'moderator' => 'Модератор', 'admin' => 'Администратор'][$reason];
@@ -126,6 +130,7 @@ function settingLabels() {
         'rl_topic_max' => 'Темы: штук', 'rl_topic_window' => 'Темы: окно',
         'rl_reply_max' => 'Ответы: штук', 'rl_reply_window' => 'Ответы: окно',
         'rl_report_max' => 'Жалобы: штук', 'rl_report_window' => 'Жалобы: окно',
+        'rl_edit_max' => 'Правки: штук', 'rl_edit_window' => 'Правки: окно',
         'online_window' => 'Окно «онлайн»',
     ];
 }

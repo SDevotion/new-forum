@@ -19,7 +19,57 @@ function notifVisibilityCond() {
 }
 
 /**
+ * Отправка email-уведомления одному получателю (если включено глобально и у пользователя).
+ * Вызывается ТОЛЬКО после реально вставленной строки уведомления — без дублей.
+ */
+function notifyEmailSend($userId, $type, $actorId, $topicId, $postId, $excerptVal) {
+    if (!setting('email_notifications', false)) return;
+
+    try {
+        require_once __DIR__ . '/mailer.php';
+        $db = Database::getInstance()->getConnection();
+
+        $st = $db->prepare("SELECT email, username, notify_email FROM users WHERE id = ? AND is_active = 1");
+        $st->execute([(int)$userId]);
+        $u = $st->fetch();
+        if (!$u || !$u['notify_email']) return;
+
+        $actorName = 'Система';
+        if ((int)$actorId > 0) {
+            $actorSt = $db->prepare("SELECT username FROM users WHERE id = ?");
+            $actorSt->execute([(int)$actorId]);
+            $actorName = $actorSt->fetchColumn() ?: 'Участник';
+        }
+
+        $kindLabel = [
+            'reply'      => 'Новый ответ',
+            'mention'    => 'Вас упомянули',
+            'quote'      => 'Вас процитировали',
+            'moderation' => 'Сообщение от модерации',
+        ][$type] ?? 'Уведомление';
+
+        $body = "Здравствуйте, {$u['username']}!\n\n";
+        if ($topicId) {
+            $topicSt = $db->prepare("SELECT title FROM topics WHERE id = ?");
+            $topicSt->execute([(int)$topicId]);
+            $topicTitle = $topicSt->fetchColumn() ?: '';
+            $body .= "$actorName: $kindLabel в теме «$topicTitle».\n\n";
+        } else {
+            $body .= "$kindLabel.\n\n";
+        }
+        if ($excerptVal) $body .= "$excerptVal\n\n";
+        if ($topicId) $body .= "Читать: " . topicUrl($topicId, $postId) . "\n\n";
+        $body .= "Отключить email-уведомления можно в настройках профиля.\n" . MAIL_FROM_NAME;
+
+        sendMail($u['email'], $kindLabel . ' — ' . MAIL_FROM_NAME, $body);
+    } catch (Throwable $e) {
+        error_log('Notify email error: ' . $e->getMessage());
+    }
+}
+
+/**
  * Одно уведомление с учётом настроек получателя.
+ * Email — только если строка реально вставлена (не дубль).
  */
 function notifyUser($userId, $type, $actorId, $topicId, $postId, $excerpt = null) {
     $userId = (int)$userId;
@@ -37,14 +87,16 @@ function notifyUser($userId, $type, $actorId, $topicId, $postId, $excerpt = null
         if ($type === 'reply' && !$prefs['notify_replies']) return;
         if (($type === 'mention' || $type === 'quote') && !$prefs['notify_mentions']) return;
 
+        $excerptVal = $excerpt !== null ? mb_substr($excerpt, 0, 255) : null;
         $stmt = $db->prepare("
             INSERT IGNORE INTO notifications (user_id, type, actor_id, topic_id, post_id, excerpt)
             VALUES (?,?,?,?,?,?)
         ");
-        $stmt->execute([
-            $userId, $type, $actorId, $topicId, $postId,
-            $excerpt !== null ? mb_substr($excerpt, 0, 255) : null
-        ]);
+        $stmt->execute([$userId, $type, $actorId, $topicId, $postId, $excerptVal]);
+
+        if ($stmt->rowCount() > 0) {
+            notifyEmailSend($userId, $type, $actorId, $topicId, $postId, $excerptVal);
+        }
     } catch (PDOException $e) {
         error_log('Notify error: ' . $e->getMessage());
     }
@@ -52,7 +104,8 @@ function notifyUser($userId, $type, $actorId, $topicId, $postId, $excerpt = null
 
 /**
  * Пакетная рассылка одного типа уведомления списку получателей.
- * Один INSERT ... SELECT с фильтром по prefs и is_active. Без N+1.
+ * Вставка построчная (INSERT IGNORE + rowCount), чтобы точно знать,
+ * кому уведомление реально добавлено, и слать email только им — без дублей.
  */
 function notifyUsersBatch(array $userIds, $type, $actorId, $topicId, $postId, $excerpt = null) {
     $userIds = array_values(array_unique(array_map('intval', $userIds)));
@@ -65,50 +118,28 @@ function notifyUsersBatch(array $userIds, $type, $actorId, $topicId, $postId, $e
 
     try {
         $db = Database::getInstance()->getConnection();
-        $in = implode(',', array_fill(0, count($userIds), '?'));
         $excerptVal = $excerpt !== null ? mb_substr($excerpt, 0, 255) : null;
 
-        $sql = "
+        // Один подготовленный запрос на всех: вставляем по одному id,
+        // фильтр prefs/is_active применяется в самом SELECT.
+        $ins = $db->prepare("
             INSERT IGNORE INTO notifications (user_id, type, actor_id, topic_id, post_id, excerpt)
             SELECT u.id, ?, ?, ?, ?, ?
             FROM users u
-            WHERE u.id IN ($in) AND u.is_active = 1 $prefCond
-        ";
-        $params = array_merge([$type, (int)$actorId, (int)$topicId, $postId, $excerptVal], $userIds);
-        $db->prepare($sql)->execute($params);
+            WHERE u.id = ? AND u.is_active = 1 $prefCond
+        ");
 
-        // Email-доставка (если включена глобально). Только что вставленные строки
-        // определяем по отсутствию is_read=1 — проще: шлём всем подходящим recipients,
-        // INSERT IGNORE уже отсёк дубли, а письмо дублем не страшно (редкое событие).
-        if (setting('email_notifications', false)) {
-            require_once __DIR__ . '/mailer.php';
-            $st = $db->prepare("
-                SELECT u.email, u.username FROM users u
-                WHERE u.id IN ($in) AND u.is_active = 1 $prefCond AND u.notify_email = 1
-            ");
-            $st->execute($userIds);
-            $recipients = $st->fetchAll();
-
-            $actorSt = $db->prepare("SELECT username FROM users WHERE id = ?");
-            $actorSt->execute([(int)$actorId]);
-            $actorName = $actorSt->fetchColumn() ?: 'Участник';
-
-            $topicSt = $db->prepare("SELECT title FROM topics WHERE id = ?");
-            $topicSt->execute([(int)$topicId]);
-            $topicTitle = $topicSt->fetchColumn() ?: '';
-
-            $kindLabel = ['reply' => 'Новый ответ', 'mention' => 'Вас упомянули', 'quote' => 'Вас процитировали'][$type] ?? 'Уведомление';
-            $link = topicUrl($topicId, $postId);
-
-            foreach ($recipients as $r) {
-                $body = "Здравствуйте, {$r['username']}!\n\n"
-                      . "$actorName: $kindLabel в теме «$topicTitle».\n\n"
-                      . ($excerptVal ? "$excerptVal\n\n" : '')
-                      . "Читать: $link\n\n"
-                      . "Отключить email-уведомления можно в настройках профиля.\n"
-                      . MAIL_FROM_NAME;
-                sendMail($r['email'], $kindLabel . ' — ' . MAIL_FROM_NAME, $body);
+        $insertedIds = [];
+        foreach ($userIds as $uid) {
+            $ins->execute([$type, (int)$actorId, (int)$topicId, $postId, $excerptVal, $uid]);
+            if ($ins->rowCount() > 0) {
+                $insertedIds[] = $uid;
             }
+        }
+
+        // Email — только тем, кому строка реально добавилась.
+        foreach ($insertedIds as $uid) {
+            notifyEmailSend($uid, $type, $actorId, $topicId, $postId, $excerptVal);
         }
     } catch (PDOException $e) {
         error_log('Notify batch error: ' . $e->getMessage());
@@ -136,7 +167,7 @@ function mdExcerptSafe($text, $len = 200) {
 }
 
 /**
- * Рассылка уведомлений о новом ответе. Батчами, без N+1.
+ * Рассылка уведомлений о новом ответе.
  * Приоритет: упоминания → автор темы → подписчики.
  */
 function notifyTopicReply($topicId, $postId, $actorId, $content) {
@@ -180,7 +211,7 @@ function notifyTopicReply($topicId, $postId, $actorId, $content) {
         $notified[] = $ownerId;
     }
 
-    // 3) Подписчики (исключая уже уведомлённых) — одним запросом+батчем
+    // 3) Подписчики (исключая уже уведомлённых)
     $st = $db->prepare("SELECT user_id FROM topic_subscriptions WHERE topic_id = ?");
     $st->execute([$topicId]);
     $subs = array_map('intval', $st->fetchAll(PDO::FETCH_COLUMN));

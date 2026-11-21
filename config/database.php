@@ -22,19 +22,19 @@ define('FORCE_SECURE_COOKIES', false);
 define('APP_TIMEZONE', 'Europe/Moscow');
 
 // ===== Почта (восстановление пароля, email-уведомления) =====
-// Базовый URL сайта без слэша в конце — используется в ссылках писем.
 define('APP_URL', 'https://forum.example.com');
-// Адрес отправителя. Должен быть разрешён вашим SMTP/хостингом.
 define('MAIL_FROM', 'noreply@forum.example.com');
 define('MAIL_FROM_NAME', 'ForumHub');
-// Способ отправки: 'mail' (PHP mail()) или 'smtp'.
-define('MAIL_TRANSPORT', 'mail');
-// SMTP-параметры (если MAIL_TRANSPORT = 'smtp')
+define('MAIL_TRANSPORT', 'mail'); // 'mail' или 'smtp'
 define('SMTP_HOST', 'localhost');
 define('SMTP_PORT', 587);
 define('SMTP_USER', '');
 define('SMTP_PASS', '');
 define('SMTP_SECURE', 'tls'); // 'tls', 'ssl' или ''
+
+// Валидный bcrypt-хэш для фиктивной проверки пароля при несуществующем логине
+// (выравнивает время ответа против тайминг-энумерации). Хэш от строки 'password'.
+define('DUMMY_PASSWORD_HASH', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi');
 
 date_default_timezone_set(APP_TIMEZONE);
 
@@ -45,7 +45,18 @@ if (APP_DEBUG) {
 } else {
     ini_set('display_errors', '0');
     ini_set('display_startup_errors', '0');
-    error_reporting(E_ALL); // логируем всё, но не показываем
+    error_reporting(E_ALL);
+}
+
+// Предупреждение о незаполненном проде-конфиге (только в лог, не наружу).
+if (!APP_DEBUG) {
+    $placeholders = [];
+    if (strpos(APP_URL, 'example.com') !== false) $placeholders[] = 'APP_URL';
+    if (strpos(MAIL_FROM, 'example.com') !== false) $placeholders[] = 'MAIL_FROM';
+    if (DB_NAME === 'example_db') $placeholders[] = 'DB_NAME';
+    if ($placeholders) {
+        error_log('CONFIG WARNING: placeholder values in production: ' . implode(', ', $placeholders));
+    }
 }
 
 // Глобальные заголовки безопасности (CSP страниц задаётся отдельно в header.php)
@@ -59,7 +70,6 @@ if (!headers_sent()) {
     }
 }
 
-// Необработанные исключения: лог + нейтральная страница, без стектрейсов наружу.
 set_exception_handler(function ($e) {
     error_log('Uncaught ' . get_class($e) . ': ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
     if (!headers_sent()) http_response_code(500);
@@ -93,11 +103,9 @@ class Database {
 
         try {
             $this->connection = new PDO($dsn, DB_USER, DB_PASS, $options);
-            // Синхронизируем таймзону соединения с PHP: NOW()/CURDATE() и date() совпадают.
             $tz = (new DateTime('now', new DateTimeZone(APP_TIMEZONE)))->format('P');
             $this->connection->exec("SET time_zone = '" . $tz . "'");
         } catch (PDOException $e) {
-            // Никаких DSN/кредов/текстов ошибок наружу — только в лог.
             error_log("Database connection error: " . $e->getMessage());
             if (!headers_sent()) http_response_code(500);
             die('<!DOCTYPE html><html lang="ru"><meta charset="utf-8"><title>Недоступно</title>'

@@ -2,7 +2,6 @@
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/ratelimit.php';
 
-// Если уже авторизован - редирект на главную
 if (isLoggedIn()) {
     redirect('/index.php');
 }
@@ -18,7 +17,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Недействительный запрос. Попробуйте снова.';
     } elseif (!rateLimitCheck('login', $loginMax * 4, $loginWindow, true)) {
-        // Общий лимит по IP (мягкий, x4): защита от распределённого перебора по многим логинам.
         $errors[] = 'Слишком много попыток входа. Подождите ' . ceil(rateLimitRetryAfter('login', $loginWindow, true) / 60) . ' мин. и попробуйте снова.';
     } else {
         $username = trim($_POST['username'] ?? '');
@@ -26,15 +24,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (empty($username) || empty($password)) {
             $errors[] = 'Заполните все поля';
-        } elseif (strlen($password) > 4096) {
+        } elseif (!is_string($password) || strlen($password) > 4096) {
             $errors[] = 'Пароль слишком длинный';
         } else {
-            // Жёсткий лимит по паре IP+логин: перебор конкретного аккаунта
-            // не сбрасывается успешным входом в ДРУГОЙ аккаунт с того же IP.
             $pairKey = 'ip' . rateLimitIp() . ':' . mb_strtolower(mb_substr($username, 0, 50));
             $db = Database::getInstance()->getConnection();
 
-            // Проверяем парный лимит вручную тем же атомарным механизмом:
             $lockName = 'rl:' . md5('login_pair|' . $pairKey);
             $got = $db->prepare("SELECT GET_LOCK(?, 3)");
             $got->execute([$lockName]);
@@ -56,21 +51,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$pairAllowed) {
                 $errors[] = 'Слишком много попыток входа для этого аккаунта. Подождите ' . ceil($loginWindow / 60) . ' мин.';
             } else {
-                // Поиск по username или email
                 $stmt = $db->prepare("SELECT id, username, password_hash, is_active FROM users WHERE username = ? OR email = ?");
                 $stmt->execute([$username, $username]);
                 $user = $stmt->fetch();
 
                 // Против тайминг-энумерации: verify выполняется всегда,
-                // даже если пользователя нет (фиктивный хэш bcrypt).
-                $hash = $user ? $user['password_hash'] : '$2y$10$usesomesillystringforsaltthisisnotrealhash000000000000000';
+                // даже если пользователя нет (валидный фиктивный bcrypt-хэш).
+                $hash = $user ? $user['password_hash'] : DUMMY_PASSWORD_HASH;
                 $ok = password_verify($password, $hash);
 
                 if ($user && $ok && $user['is_active']) {
-                    // Успех: сбрасываем ТОЛЬКО парный счётчик этого логина.
                     rateLimitClear('login_pair', $pairKey);
 
-                    // Ротация ID против session fixation
                     session_regenerate_id(true);
                     unset($_SESSION['guest_seen'], $_SESSION['viewed_topics'], $_SESSION['attach_dl']);
                     $_SESSION['user_id'] = $user['id'];

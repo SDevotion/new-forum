@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/permissions.php';
 require_once __DIR__ . '/../includes/ratelimit.php';
+require_once __DIR__ . '/../includes/visibility.php';
 
 if (!isLoggedIn()) { setFlashMessage('error', 'Необходимо войти'); redirect('/auth/login.php'); }
 enforceActiveUser();
@@ -14,14 +15,19 @@ $back = $_POST['back'] ?? '/index.php';
 if (!preg_match('~^/[A-Za-z0-9_./?=&#%-]*$~', $back)) $back = '/index.php';
 
 if ($id <= 0) { setFlashMessage('error', 'Объект не найден'); redirect($back); }
+
 $reportMin = setting('report_min', 5);
 $reportMax = setting('report_max', 500);
 if (mb_strlen($reason) < $reportMin) { setFlashMessage('error', "Опишите причину жалобы (минимум $reportMin символов)"); redirect($back); }
 if (mb_strlen($reason) > $reportMax) { setFlashMessage('error', "Причина слишком длинная (максимум $reportMax символов)"); redirect($back); }
-if (!rateLimitCheck('report', max(1, setting('rl_report_max', 5)), max(60, setting('rl_report_window', 3600)))) { setFlashMessage('error', 'Слишком много жалоб за последнее время. Попробуйте позже.'); redirect($back); }
 
 $db = Database::getInstance()->getConnection();
 $u = getCurrentUser();
+
+// Видимость объекта: скрытые темы/посты и неактивные разделы не принимаются
+// (и не подтверждают своё существование). Единые правила из visibility.php.
+$visible = $type === 'post' ? postVisible($id) : topicVisible($id);
+if (!$visible) { setFlashMessage('error', 'Объект не найден'); redirect($back); }
 
 $table = $type === 'post' ? 'posts' : 'topics';
 $stmt = $db->prepare("SELECT id, user_id FROM `$table` WHERE id = ?");
@@ -30,6 +36,12 @@ $targetObj = $stmt->fetch();
 if (!$targetObj) { setFlashMessage('error', 'Объект не найден'); redirect($back); }
 if ((int)$targetObj['user_id'] === (int)$u['id']) {
     setFlashMessage('error', 'Нельзя пожаловаться на собственное сообщение');
+    redirect($back);
+}
+
+// Лимитер — только после всех проверок, чтобы не тратить квоту на невалидные запросы
+if (!rateLimitCheck('report', max(1, setting('rl_report_max', 5)), max(60, setting('rl_report_window', 3600)))) {
+    setFlashMessage('error', 'Слишком много жалоб за последнее время. Попробуйте позже.');
     redirect($back);
 }
 

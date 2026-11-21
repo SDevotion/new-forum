@@ -87,12 +87,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Автор автоматически подписывается на свою тему
                 subscribeTopic($currentUser['id'], $topicId);
 
-                // Уведомления об упоминаниях и цитатах в первом сообщении
-                foreach (parseMentions($content) as $name => $kind) {
-                    $st = $db->prepare("SELECT id FROM users WHERE username = ? AND is_active = 1");
-                    $st->execute([$name]);
-                    $uid = (int)$st->fetchColumn();
-                    if ($uid) notifyUser($uid, $kind, $currentUser['id'], $topicId, null, mdExcerpt($content));
+                // Уведомления об упоминаниях и цитатах в первом сообщении (батч)
+                $mentions = parseMentions($content);
+                if ($mentions) {
+                    $names = array_keys($mentions);
+                    $in = implode(',', array_fill(0, count($names), '?'));
+                    $st = $db->prepare("SELECT id, username FROM users WHERE username IN ($in) AND is_active = 1");
+                    $st->execute($names);
+                    $byKind = ['mention' => [], 'quote' => []];
+                    foreach ($st->fetchAll() as $row) {
+                        $uid = (int)$row['id'];
+                        if ($uid === (int)$currentUser['id']) continue;
+                        $kind = $mentions[$row['username']] ?? 'mention';
+                        $byKind[$kind][] = $uid;
+                    }
+                    foreach ($byKind as $kind => $ids) {
+                        if ($ids) notifyUsersBatch($ids, $kind, (int)$currentUser['id'], (int)$topicId, null, mdExcerpt($content));
+                    }
                 }
 
                 setFlashMessage('success', 'Тема успешно создана!');

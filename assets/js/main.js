@@ -452,6 +452,13 @@ document.addEventListener('DOMContentLoaded', function() {
         f.addEventListener('submit', e => { if (!confirm('Удалить тему со всеми сообщениями?')) e.preventDefault(); });
     });
 
+    // ===== Подтверждение операций обслуживания (CSP: без инлайн-скриптов) =====
+    document.querySelectorAll('.js-confirm-maint').forEach(f => {
+        f.addEventListener('submit', e => {
+            if (!confirm('Выполнить операцию очистки? Удаление необратимо.')) e.preventDefault();
+        });
+    });
+
     // ===== Форма редактирования =====
     const editForm = document.getElementById('editForm');
     if (editForm) {

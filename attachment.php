@@ -3,6 +3,7 @@
 // Поддержка ETag/Last-Modified/Range (перемотка видео, докачка).
 require_once __DIR__ . '/includes/functions.php';
 require_once __DIR__ . '/includes/permissions.php';
+require_once __DIR__ . '/includes/visibility.php';
 
 $id = (int)($_GET['id'] ?? 0);
 $db = Database::getInstance()->getConnection();
@@ -12,30 +13,11 @@ $stmt->execute([$id]);
 $att = $stmt->fetch();
 if (!$att) { http_response_code(404); exit('Файл не найден'); }
 
-$isStaff = isModerator();
-$staffFlag = $isStaff ? 1 : 0;
-
-// Видимость родительского объекта: те же правила, что у topic.php
-if ($att['target_type'] === 'topic') {
-    $stmt = $db->prepare("
-        SELECT t.id FROM topics t
-        JOIN forums f ON f.id = t.forum_id
-        JOIN categories c ON c.id = f.category_id
-        WHERE t.id = ? AND f.is_active = 1 AND c.is_active = 1 AND (t.is_hidden = 0 OR ? = 1)
-    ");
-    $stmt->execute([(int)$att['target_id'], $staffFlag]);
-} else {
-    $stmt = $db->prepare("
-        SELECT p.id FROM posts p
-        JOIN topics t ON t.id = p.topic_id
-        JOIN forums f ON f.id = t.forum_id
-        JOIN categories c ON c.id = f.category_id
-        WHERE p.id = ? AND f.is_active = 1 AND c.is_active = 1
-          AND (p.is_hidden = 0 OR ? = 1) AND (t.is_hidden = 0 OR ? = 1)
-    ");
-    $stmt->execute([(int)$att['target_id'], $staffFlag, $staffFlag]);
-}
-if (!$stmt->fetch()) { http_response_code(404); exit('Файл не найден'); }
+// Видимость родителя — единые правила из visibility.php
+$visible = $att['target_type'] === 'topic'
+    ? topicVisible((int)$att['target_id'])
+    : postVisible((int)$att['target_id']);
+if (!$visible) { http_response_code(404); exit('Файл не найден'); }
 
 // Файл на диске: имя строго нашего формата
 if (!preg_match('/^[a-f0-9]{32}\.[a-z0-9]{2,5}$/', $att['stored_name'])) {
@@ -55,7 +37,6 @@ $downloadName = str_replace(['"', "\r", "\n"], '', $att['orig_name']);
 header('Content-Type: ' . $mime);
 header('X-Content-Type-Options: nosniff');
 header('Content-Disposition: ' . ($isImage ? 'inline' : 'attachment') . '; filename="' . $downloadName . '"; filename*=UTF-8\'\'' . rawurlencode($att['orig_name']));
-// Короткий приватный кэш: скрытое модератором вложение не должно жить в браузере сутки.
 header('Cache-Control: private, max-age=3600, must-revalidate');
 header('ETag: ' . $etag);
 header('Last-Modified: ' . gmdate('D, d M Y H:i:s', $mtime) . ' GMT');
@@ -64,7 +45,6 @@ if (!$isImage) {
     header("Content-Security-Policy: sandbox; default-src 'none'");
 }
 
-// Условные запросы: 304 без тела
 $ifNoneMatch = $_SERVER['HTTP_IF_NONE_MATCH'] ?? '';
 $ifModifiedSince = $_SERVER['HTTP_IF_MODIFIED_SINCE'] ?? '';
 if (trim($ifNoneMatch) === $etag || ($ifModifiedSince && @strtotime($ifModifiedSince) >= $mtime)) {
@@ -72,13 +52,11 @@ if (trim($ifNoneMatch) === $etag || ($ifModifiedSince && @strtotime($ifModifiedS
     exit;
 }
 
-// Range: один диапазон bytes=start-end (достаточно для <video> и докачки)
 $start = 0;
 $end = $size - 1;
 $isRange = false;
 if (!empty($_SERVER['HTTP_RANGE']) && preg_match('/^bytes=(\d*)-(\d*)$/', trim($_SERVER['HTTP_RANGE']), $m)) {
     if ($m[1] === '' && $m[2] !== '') {
-        // суффикс: последние N байт
         $start = max(0, $size - (int)$m[2]);
     } else {
         $start = (int)$m[1];
@@ -97,7 +75,6 @@ if (!empty($_SERVER['HTTP_RANGE']) && preg_match('/^bytes=(\d*)-(\d*)$/', trim($
 $length = $end - $start + 1;
 header('Content-Length: ' . $length);
 
-// Счётчик скачиваний: только полная отдача, не чаще раза за сессию на файл.
 if (!$isRange && sessionMarkOnce('attach_dl', $id)) {
     $db->prepare("UPDATE attachments SET downloads = downloads + 1 WHERE id = ?")->execute([$id]);
 }

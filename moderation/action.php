@@ -54,11 +54,6 @@ try {
             if (!$stmt->fetch()) done('Раздел не найден', $back, 'error');
             if ((int)$t['forum_id'] === $forumId) done('Тема уже в этом разделе', $back, 'info');
 
-            // Вес — фактический COUNT ответов, а не денормализованный replies_count.
-            $st = $db->prepare("SELECT COUNT(*) FROM posts WHERE topic_id = ?");
-            $st->execute([$id]);
-            $weight = (int)$st->fetchColumn() + 1;
-
             $db->beginTransaction();
             $db->prepare("UPDATE topics SET forum_id = ? WHERE id = ?")->execute([$forumId, $id]);
             $db->commit();

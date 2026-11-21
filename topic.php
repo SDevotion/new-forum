@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/includes/functions.php';
 require_once __DIR__ . '/includes/permissions.php';
+require_once __DIR__ . '/includes/visibility.php';
 require_once __DIR__ . '/includes/editing.php';
 require_once __DIR__ . '/includes/markdown.php';
 require_once __DIR__ . '/includes/notifications.php';
@@ -11,23 +12,10 @@ $topicId = (int)($_GET['id'] ?? 0);
 
 $isStaff = isModerator();
 
-$stmt = $db->prepare("
-    SELECT t.*, 
-           u.username, u.avatar, u.role, u.signature, u.id AS author_id,
-           eu.username AS editor_name,
-           f.title AS forum_title, f.id AS forum_id,
-           c.title AS category_title
-    FROM topics t
-    JOIN users u ON u.id = t.user_id
-    JOIN forums f ON f.id = t.forum_id
-    JOIN categories c ON c.id = f.category_id
-    LEFT JOIN users eu ON eu.id = t.edited_by
-    WHERE t.id = ? AND f.is_active = 1 AND c.is_active = 1
-");
-$stmt->execute([$topicId]);
-$topic = $stmt->fetch();
+// Загрузка темы + проверка видимости — единый хелпер
+$topic = loadVisibleTopic($topicId);
 
-if (!$topic || ($topic['is_hidden'] && !$isStaff)) {
+if (!$topic) {
     http_response_code(404);
     $pageTitle = 'Тема не найдена';
     require_once __DIR__ . '/includes/header.php';

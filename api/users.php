@@ -4,10 +4,11 @@ require_once __DIR__ . '/../includes/functions.php';
 header('Content-Type: application/json; charset=utf-8');
 
 if (!isLoggedIn()) { echo '[]'; exit; }
+// Забаненный аккаунт с живой сессией не должен пользоваться API.
+if (!getCurrentUser()) { echo '[]'; exit; }
 
 $q = trim($_GET['q'] ?? '');
 if ($q === '' || mb_strlen($q) > 20) { echo '[]'; exit; }
-// Имя пользователя содержит только [a-zA-Z0-9_] — '_' в LIKE является wildcard
 $qLike = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q);
 
 $db = Database::getInstance()->getConnection();

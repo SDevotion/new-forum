@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/includes/editing.php';
 require_once __DIR__ . '/includes/markdown.php';
+require_once __DIR__ . '/includes/pagination.php';
 
 $db = Database::getInstance()->getConnection();
 $type = ($_GET['type'] ?? '') === 'post' ? 'post' : 'topic';
@@ -44,8 +45,31 @@ if (!$obj) {
 
 $backUrl = '/topic.php?id=' . (int)$obj['back_id'] . ($type === 'post' ? '#post-' . $id : '');
 $pageTitle = 'История правок';
-$revisions = getRevisions($type, $id);
 $staff = isModerator();
+
+// Пагинация ревизий: по 10 на страницу, контент только текущей страницы
+$perPage = 10;
+$page = max(1, (int)($_GET['page'] ?? 1));
+
+$st = $db->prepare("SELECT COUNT(*) FROM post_edits WHERE target_type = ? AND target_id = ?");
+$st->execute([$type, $id]);
+$totalRevisions = (int)$st->fetchColumn();
+$totalPages = max(1, (int)ceil($totalRevisions / $perPage));
+if ($page > $totalPages) $page = $totalPages;
+$offset = ($page - 1) * $perPage;
+
+$st = $db->prepare("
+    SELECT e.*, u.username, u.avatar
+    FROM post_edits e
+    JOIN users u ON u.id = e.editor_id
+    WHERE e.target_type = ? AND e.target_id = ?
+    ORDER BY e.created_at DESC, e.id DESC
+    LIMIT $perPage OFFSET $offset
+");
+$st->execute([$type, $id]);
+$revisions = $st->fetchAll();
+
+mdPrimeMentions(array_merge([$obj['content']], array_column($revisions, 'old_content')));
 
 require_once __DIR__ . '/includes/header.php';
 ?>
@@ -58,7 +82,7 @@ require_once __DIR__ . '/includes/header.php';
 
 <div class="page-header">
     <h1>История правок</h1>
-    <p class="page-subtitle"><?= $type === 'topic' ? 'Тема' : 'Сообщение' ?> #<?= $id ?> · всего правок: <?= count($revisions) ?></p>
+    <p class="page-subtitle"><?= $type === 'topic' ? 'Тема' : 'Сообщение' ?> #<?= $id ?> · всего правок: <?= $totalRevisions ?></p>
 </div>
 
 <div class="revision-current">
@@ -77,9 +101,10 @@ require_once __DIR__ . '/includes/header.php';
     </div>
 <?php else: ?>
     <?php foreach ($revisions as $i => $rev): ?>
+        <?php $versionNum = $totalRevisions - $offset - $i; ?>
         <details class="revision-item">
             <summary class="revision-summary">
-                <span class="revision-num">Версия <?= count($revisions) - $i ?></span>
+                <span class="revision-num">Версия <?= $versionNum ?></span>
                 <span class="revision-meta"><?= escape($rev['username']) ?> · <?= date('d.m.Y H:i', strtotime($rev['created_at'])) ?></span>
                 <?php if ($rev['reason']): ?><span class="revision-reason"><?= escape($rev['reason']) ?></span><?php endif; ?>
             </summary>
@@ -97,6 +122,7 @@ require_once __DIR__ . '/includes/header.php';
             </div>
         </details>
     <?php endforeach; ?>
+    <?php renderPagination($page, $totalPages, '/history.php?type=' . $type . '&id=' . $id); ?>
 <?php endif; ?>
 
 <div class="form-actions" style="margin-top:24px">

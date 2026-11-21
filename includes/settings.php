@@ -1,6 +1,6 @@
 <?php
 // includes/settings.php — единый источник настроек форума.
-// Значения по умолчанию = бывшие хардкод-константы; таблица settings может быть пустой.
+// Кэш: APCu (между запросами, TTL 60с) -> static (в рамках запроса) -> дефолты.
 
 function settingsDefaults() {
     static $defaults = null;
@@ -58,13 +58,29 @@ function settingsDefaults() {
     return $defaults;
 }
 
+function settingsApcuAvailable() {
+    return function_exists('apcu_fetch') && function_exists('apcu_store')
+        && (!function_exists('apcu_enabled') || apcu_enabled());
+}
+
 /**
- * Все настройки одним запросом за жизнь запроса (static-кэш).
+ * Все настройки: APCu -> static -> БД -> дефолты.
  */
 function settingsAll() {
     static $cache = null;
-    if (!empty($GLOBALS['__settings_dirty'])) { $cache = null; unset($GLOBALS['__settings_dirty']); }
+    if (!empty($GLOBALS['__settings_dirty'])) {
+        $cache = null;
+        unset($GLOBALS['__settings_dirty']);
+        if (settingsApcuAvailable()) apcu_delete('forum_settings_all');
+    }
     if ($cache !== null) return $cache;
+
+    if (settingsApcuAvailable()) {
+        $hit = apcu_fetch('forum_settings_all', $ok);
+        if ($ok && is_array($hit)) {
+            return $cache = $hit;
+        }
+    }
 
     $cache = [];
     foreach (settingsDefaults() as $key => $def) {
@@ -76,8 +92,11 @@ function settingsAll() {
             $cache[$row['key']] = settingsCast($row['value'], $row['type']);
         }
     } catch (Throwable $e) {
-        // таблицы ещё нет (до установки) — работаем на дефолтах
         error_log('settingsAll: ' . $e->getMessage());
+    }
+
+    if (settingsApcuAvailable()) {
+        apcu_store('forum_settings_all', $cache, 60);
     }
     return $cache;
 }
@@ -91,26 +110,17 @@ function settingsCast($value, $type) {
     }
 }
 
-/**
- * Получить настройку. $default используется, если ключ неизвестен.
- */
 function setting($key, $default = null) {
     $all = settingsAll();
     if (array_key_exists($key, $all)) return $all[$key];
     return $default;
 }
 
-/**
- * Сброс кэша (после записи из админки).
- */
 function settingsCacheReset() {
     $GLOBALS['__settings_dirty'] = true;
+    if (settingsApcuAvailable()) apcu_delete('forum_settings_all');
 }
 
-/**
- * Записать настройки (ключ => значение). Тип берётся из дефолтов.
- * Возвращает список реально изменённых ключей.
- */
 function settingsSet(array $kv) {
     $db = Database::getInstance()->getConnection();
     $defs = settingsDefaults();
@@ -121,7 +131,7 @@ function settingsSet(array $kv) {
         ON DUPLICATE KEY UPDATE `value` = VALUES(`value`)
     ");
     foreach ($kv as $key => $value) {
-        if (!isset($defs[$key])) continue; // whitelist: только известные ключи
+        if (!isset($defs[$key])) continue;
         [$type, , $group] = $defs[$key];
         if ($type === 'bool') $value = $value ? '1' : '0';
         elseif ($type === 'int') $value = (string)(int)$value;

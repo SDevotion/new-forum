@@ -48,6 +48,7 @@ function moderationActionNames() {
         'forum_toggle' => 'Видимость раздела', 'forum_delete' => 'Удаление раздела',
         'settings_update' => 'Изменение настроек',
         'maint_recount' => 'Пересчёт счётчиков', 'maint_clean' => 'Очистка данных',
+        'category_edit' => 'Редактирование категории', 'forum_edit' => 'Редактирование раздела',
     ];
 }
 
@@ -132,6 +133,8 @@ function settingLabels() {
         'rl_report_max' => 'Жалобы: штук', 'rl_report_window' => 'Жалобы: окно',
         'rl_edit_max' => 'Правки: штук', 'rl_edit_window' => 'Правки: окно',
         'online_window' => 'Окно «онлайн»',
+        'email_notifications' => 'Email-уведомления',
+        'rl_forgot_max' => 'Восстановление: запросов', 'rl_forgot_window' => 'Восстановление: окно',
     ];
 }
 

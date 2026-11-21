@@ -99,39 +99,48 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < $searchMin) {
            : ($sort === 'new' ? 'created_at DESC, kind ASC, id DESC' : 'created_at ASC, kind ASC, id ASC');
 
     try {
+        // Единый прогон: total считаем оконной функцией в том же запросе,
+        // MATCH не выполняется дважды (COUNT-подзапрос убран).
         if ($scope === 'topics') {
-            $cnt = $db->prepare("SELECT COUNT(*) FROM ($sqlTopics) x");
-            $cnt->execute([$staff ? 1 : 0, $ft, $ft]);
-            $total = (int)$cnt->fetchColumn();
-            $totalPages = max(1, (int)ceil($total / $perPage));
-            if ($page > $totalPages) { $page = $totalPages; $offset = ($page - 1) * $perPage; }
-
-            $st = $db->prepare("SELECT * FROM ($sqlTopics) x ORDER BY $order LIMIT $perPage OFFSET $offset");
-            $st->execute([$staff ? 1 : 0, $ft, $ft]);
-            $results = $st->fetchAll();
-
+            $inner = $sqlTopics;
+            $params = [$staff ? 1 : 0, $ft, $ft];
         } elseif ($scope === 'posts') {
-            $cnt = $db->prepare("SELECT COUNT(*) FROM ($sqlPosts) x");
-            $cnt->execute([$ft, $ft]);
-            $total = (int)$cnt->fetchColumn();
-            $totalPages = max(1, (int)ceil($total / $perPage));
-            if ($page > $totalPages) { $page = $totalPages; $offset = ($page - 1) * $perPage; }
-
-            $st = $db->prepare("SELECT * FROM ($sqlPosts) x ORDER BY $order LIMIT $perPage OFFSET $offset");
-            $st->execute([$ft, $ft]);
-            $results = $st->fetchAll();
-
+            $inner = $sqlPosts;
+            $params = [$ft, $ft];
         } else {
-            $union = "$sqlTopics UNION ALL $sqlPosts";
+            $inner = "$sqlTopics UNION ALL $sqlPosts";
+            $params = [$staff ? 1 : 0, $ft, $ft, $ft, $ft];
+        }
 
-            $cnt = $db->prepare("SELECT COUNT(*) FROM ($union) x");
-            $cnt->execute([$staff ? 1 : 0, $ft, $ft, $ft, $ft]);
+        $st = $db->prepare("
+            SELECT x.*, COUNT(*) OVER () AS full_total
+            FROM ($inner) x
+            ORDER BY $order
+            LIMIT $perPage OFFSET $offset
+        ");
+        $st->execute($params);
+        $results = $st->fetchAll();
+
+        if ($results) {
+            $total = (int)$results[0]['full_total'];
+        } else {
+            // Пустая страница за пределами диапазона — узнаём total дешёвым COUNT
+            $cnt = $db->prepare("SELECT COUNT(*) FROM ($inner) x");
+            $cnt->execute($params);
             $total = (int)$cnt->fetchColumn();
-            $totalPages = max(1, (int)ceil($total / $perPage));
-            if ($page > $totalPages) { $page = $totalPages; $offset = ($page - 1) * $perPage; }
-
-            $st = $db->prepare("SELECT * FROM ($union) x ORDER BY $order LIMIT $perPage OFFSET $offset");
-            $st->execute([$staff ? 1 : 0, $ft, $ft, $ft, $ft]);
+        }
+        $totalPages = max(1, (int)ceil($total / $perPage));
+        if ($page > $totalPages) {
+            // Перезапрос корректной страницы
+            $page = $totalPages;
+            $offset = ($page - 1) * $perPage;
+            $st = $db->prepare("
+                SELECT x.*, COUNT(*) OVER () AS full_total
+                FROM ($inner) x
+                ORDER BY $order
+                LIMIT $perPage OFFSET $offset
+            ");
+            $st->execute($params);
             $results = $st->fetchAll();
         }
 

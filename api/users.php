@@ -1,11 +1,18 @@
 <?php
 require_once __DIR__ . '/../includes/functions.php';
+require_once __DIR__ . '/../includes/ratelimit.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
 if (!isLoggedIn()) { echo '[]'; exit; }
-// Забаненный аккаунт с живой сессией не должен пользоваться API.
 if (!getCurrentUser()) { echo '[]'; exit; }
+
+// Лимит частоты автодополнения (антиэнумерация ников)
+if (!rateLimitCheck('autocomplete', 30, 60)) {
+    http_response_code(429);
+    echo '[]';
+    exit;
+}
 
 $q = trim($_GET['q'] ?? '');
 if ($q === '' || mb_strlen($q) > 20) { echo '[]'; exit; }

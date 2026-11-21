@@ -25,12 +25,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([$email]);
             $user = $stmt->fetch();
 
-            if ($user) {
-                // Инвалидируем прежние неиспользованные токены
-                $db->prepare("DELETE FROM password_resets WHERE user_id = ?")->execute([$user['id']]);
+            // Одинаковый путь кода для существующего и несуществующего email
+            // (выравнивание времени ответа против тайминг-энумерации).
+            $token = bin2hex(random_bytes(32));
+            $hash = hash('sha256', $token);
 
-                $token = bin2hex(random_bytes(32));
-                $hash = hash('sha256', $token);
+            if ($user) {
+                $db->prepare("DELETE FROM password_resets WHERE user_id = ?")->execute([$user['id']]);
                 $db->prepare("INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, NOW() + INTERVAL 1 HOUR)")
                    ->execute([$user['id'], $hash]);
 
@@ -40,8 +41,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                       . "Если вы не запрашивали сброс — просто проигнорируйте это письмо.\n\n"
                       . MAIL_FROM_NAME;
                 sendMail($email, 'Восстановление пароля — ' . MAIL_FROM_NAME, $body);
+            } else {
+                // Фиктивная работа той же стоимости: хэширование + пауза,
+                // сопоставимая с реальной отправкой. Письмо не уходит.
+                usleep(random_int(150000, 350000));
             }
-            // Нейтральный ответ независимо от существования email
+
             $sent = true;
         }
     }

@@ -6,88 +6,6 @@ const FG = Object.assign({
     messageMax: 20000, reportMin: 5, reportMax: 500, passwordMin: 6
 }, window.FG_CONFIG || {});
 
-// ===== Markdown -> HTML (клиентский предпросмотр) =====
-function mdToHtml(src) {
-    let text = String(src).replace(/\r\n?/g, '\n').replace(/\u0000/g, '');
-    const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-                      .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
-    text = esc(text);
-
-    const codeBlocks = [];
-    text = text.replace(/```([a-zA-Z0-9_+-]*)\n([\s\S]*?)\n```/g, (m, lang, code) => {
-        codeBlocks.push('<pre class="md-pre"' + (lang ? ' data-lang="'+lang+'"' : '') +
-                        '><code>' + code.replace(/\n+$/,'') + '</code></pre>');
-        return '\u0000CODE' + (codeBlocks.length-1) + '\u0000';
-    });
-
-    const inlineCodes = [];
-    text = text.replace(/`([^`\n]+)`/g, (m, code) => {
-        inlineCodes.push('<code class="md-code">' + code + '</code>');
-        return '\u0000IC' + (inlineCodes.length-1) + '\u0000';
-    });
-
-    text = text.replace(/\[quote=([^\]\n]{1,60})\]([\s\S]*?)\[\/quote\]/g,
-        (m, a, t) => '<div class="post-quote"><div class="post-quote-author">' +
-                     a.trim() + ' писал(а):</div>' + t.trim() + '</div>');
-
-    const lines = text.split('\n');
-    const out = [];
-    let para = [], inList = false, listType = '', inQuote = false;
-
-    const flushPara = () => { if (para.length) { out.push('<p>'+para.join('<br>')+'</p>'); para = []; } };
-    const closeList = () => { if (inList) { out.push('</'+listType+'>'); inList=false; listType=''; } };
-    const closeQuote = () => { if (inQuote) { out.push('</blockquote>'); inQuote=false; } };
-
-    for (let raw of lines) {
-        const line = raw.trim();
-        if (!line) { flushPara(); closeList(); closeQuote(); continue; }
-        if (/^\u0000CODE\d+\u0000$/.test(line)) { flushPara(); closeList(); closeQuote(); out.push(line); continue; }
-        if (/^(-{3,}|\*{3,}|_{3,})$/.test(line)) { flushPara(); closeList(); closeQuote(); out.push('<hr class="md-hr">'); continue; }
-
-        let m;
-        if ((m = line.match(/^(#{1,4})\s+(.+)$/))) {
-            flushPara(); closeList(); closeQuote();
-            const lvl = m[1].length + 2;
-            out.push('<h'+lvl+' class="md-h">'+m[2]+'</h'+lvl+'>'); continue;
-        }
-        if ((m = line.match(/^&gt;\s?(.*)$/))) {
-            flushPara(); closeList();
-            if (!inQuote) { out.push('<blockquote class="md-quote">'); inQuote = true; }
-            out.push(m[1]+'<br>'); continue;
-        }
-        closeQuote();
-
-        if ((m = line.match(/^[-*+]\s+(.+)$/))) {
-            flushPara();
-            if (!inList || listType !== 'ul') { closeList(); out.push('<ul class="md-list">'); inList=true; listType='ul'; }
-            out.push('<li>'+m[1]+'</li>'); continue;
-        }
-        if ((m = line.match(/^\d+[.)]\s+(.+)$/))) {
-            flushPara();
-            if (!inList || listType !== 'ol') { closeList(); out.push('<ol class="md-list">'); inList=true; listType='ol'; }
-            out.push('<li>'+m[1]+'</li>'); continue;
-        }
-        closeList();
-        para.push(line);
-    }
-    flushPara(); closeList(); closeQuote();
-
-    let html = out.join('\n');
-    html = html.replace(/\*\*(?=\S)([\s\S]+?)(?<=\S)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/(^|[^*\w])\*(?=\S)([^*\n]+?)(?<=\S)\*(?!\*)/g, '$1<em>$2</em>');
-    html = html.replace(/~~(?=\S)([\s\S]+?)(?<=\S)~~/g, '<del>$1</del>');
-    html = html.replace(/\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]{1,500})\)/g,
-        (m, t, u) => '<a href="'+u+'" class="md-link" target="_blank" rel="nofollow noopener noreferrer">'+t+'</a>');
-    html = html.replace(/(^|[^">=\w])(https?:\/\/[^\s<>"']{1,500})/g,
-        (m, p, u) => p+'<a href="'+u+'" class="md-link" target="_blank" rel="nofollow noopener noreferrer">'+u+'</a>');
-
-    html = html.replace(/(^|[^\w>])@([a-zA-Z0-9_]{3,50})/g, '$1<span class="mention">@$2</span>');
-
-    html = html.replace(/\u0000IC(\d+)\u0000/g, (m,i)=>inlineCodes[+i]);
-    html = html.replace(/\u0000CODE(\d+)\u0000/g, (m,i)=>codeBlocks[+i]);
-    return html;
-}
-
 document.addEventListener('DOMContentLoaded', function() {
     
     // ===== Закрытие алертов =====
@@ -521,12 +439,41 @@ document.addEventListener('DOMContentLoaded', function() {
         const panes = wrap.querySelectorAll('.md-pane');
         const previewPane = wrap.querySelector('.md-pane[data-pane="preview"]');
 
+        const csrf = wrap.dataset.csrf || '';
+        let previewTimer = null;
+        let previewSeq = 0;
+
         const renderPreview = () => {
-            preview.innerHTML = ta.value.trim() ? mdToHtml(ta.value) : '<p class="md-empty">Нечего показывать</p>';
+            const text = ta.value;
+            if (!text.trim()) {
+                preview.innerHTML = '<p class="md-empty">Нечего показывать</p>';
+                return;
+            }
+            const seq = ++previewSeq;
+            preview.innerHTML = '<p class="md-empty">Рендер…</p>';
+            fetch('/api/preview.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: text, csrf_token: csrf })
+            })
+            .then(r => r.ok ? r.json() : Promise.reject())
+            .then(data => {
+                if (seq !== previewSeq) return; // устаревший ответ
+                preview.innerHTML = data.html || '<p class="md-empty">Нечего показывать</p>';
+            })
+            .catch(() => {
+                if (seq !== previewSeq) return;
+                preview.innerHTML = '<p class="md-empty">Не удалось получить предпросмотр</p>';
+            });
+        };
+
+        const schedulePreview = () => {
+            clearTimeout(previewTimer);
+            previewTimer = setTimeout(renderPreview, 350);
         };
 
         ta.addEventListener('input', () => {
-            if (previewPane.classList.contains('active')) renderPreview();
+            if (previewPane.classList.contains('active')) schedulePreview();
         });
 
         tabs.forEach(tab => {

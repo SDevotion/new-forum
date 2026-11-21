@@ -1,11 +1,14 @@
 <?php
 require_once __DIR__ . '/../includes/editing.php';
 require_once __DIR__ . '/../includes/attachments.php';
+require_once __DIR__ . '/../includes/ratelimit.php';
 
 if (!isLoggedIn()) { setFlashMessage('error', 'Необходимо войти'); redirect('/auth/login.php'); }
+enforceActiveUser();
 
 $db = Database::getInstance()->getConnection();
 $me = getCurrentUser();
+$isStaff = isModerator();
 
 $type = ($_REQUEST['type'] ?? '') === 'post' ? 'post' : 'topic';
 $id = (int)($_REQUEST['id'] ?? 0);
@@ -13,6 +16,7 @@ $id = (int)($_REQUEST['id'] ?? 0);
 if ($type === 'topic') {
     $stmt = $db->prepare("
         SELECT t.id, t.user_id, t.title, t.content, t.created_at, t.forum_id,
+               t.is_hidden, t.is_closed,
                f.title AS context_title
         FROM topics t
         JOIN forums f ON f.id = t.forum_id
@@ -23,6 +27,7 @@ if ($type === 'topic') {
 } else {
     $stmt = $db->prepare("
         SELECT p.id, p.user_id, NULL AS title, p.content, p.created_at, p.topic_id,
+               p.is_hidden, t.is_closed,
                t.title AS context_title
         FROM posts p
         JOIN topics t ON t.id = p.topic_id
@@ -34,14 +39,18 @@ if ($type === 'topic') {
 }
 $obj = $stmt->fetch();
 
-if (!$obj) { setFlashMessage('error', 'Объект не найден'); redirect('/index.php'); }
+if (!$obj || ($obj['is_hidden'] && !$isStaff)) {
+    setFlashMessage('error', 'Объект не найден');
+    redirect('/index.php');
+}
 
 $backUrl = $type === 'topic'
     ? '/topic.php?id=' . $id
     : '/topic.php?id=' . (int)$obj['topic_id'] . '#post-' . $id;
 
-if (!canEdit($obj['user_id'], $obj['created_at'])) {
-    setFlashMessage('error', 'Редактирование недоступно: истёк срок правки или нет прав');
+$editFlags = ['is_hidden' => (bool)$obj['is_hidden'], 'topic_closed' => (bool)$obj['is_closed']];
+if (!canEdit($obj['user_id'], $obj['created_at'], $editFlags)) {
+    setFlashMessage('error', 'Редактирование недоступно: истёк срок правки, объект скрыт или тема закрыта');
     redirect($backUrl);
 }
 
@@ -56,6 +65,8 @@ $reason = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Недействительный запрос. Обновите страницу.';
+    } elseif (!rateLimitCheck('content_edit', max(1, setting('rl_edit_max', 20)), max(60, setting('rl_edit_window', 600)))) {
+        $errors[] = 'Слишком много правок подряд. Подождите ' . ceil(rateLimitRetryAfter('content_edit', max(60, setting('rl_edit_window', 600))) / 60) . ' мин.';
     } else {
         $content = trim($_POST['content'] ?? '');
         $reason  = trim($_POST['reason'] ?? '');
@@ -123,10 +134,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $db->commit();
                 foreach ($removedNames as $sn) attachUnlink($sn);
 
-                // Новые вложения
+                // Новые вложения (текст уже сохранён — ошибки хранилища не отменяют правку)
                 try {
                     attachStore($attachFiles, $type, $id, (int)$me['id']);
-                } catch (RuntimeException $e) {
+                } catch (Throwable $e) {
                     error_log('Attach store error: ' . $e->getMessage());
                     setFlashMessage('info', 'Изменения сохранены, но часть вложений не удалось сохранить');
                     redirect($backUrl);
@@ -156,8 +167,12 @@ require_once __DIR__ . '/../includes/header.php';
     <h1 class="form-card-title"><?= $type === 'topic' ? 'Редактирование темы' : 'Редактирование сообщения' ?></h1>
     <p class="form-card-subtitle">
         <?= escape($obj['context_title']) ?>
-        <?php if (!isModerator()): ?> · Правка доступна в течение <?= (int)setting('edit_window_hours', 24) ?> ч. после публикации<?php endif; ?>
+        <?php if (!$isStaff): ?> · Правка доступна в течение <?= (int)setting('edit_window_hours', 24) ?> ч. после публикации<?php endif; ?>
     </p>
+
+    <?php if ($obj['is_hidden']): ?>
+        <div class="hidden-note">⚠️ Объект скрыт модератором. Правка не снимает скрытие.</div>
+    <?php endif; ?>
 
     <?php if ($errors): ?>
         <div class="alert alert-error"><ul class="error-list"><?php foreach ($errors as $e): ?><li><?= escape($e) ?></li><?php endforeach; ?></ul></div>

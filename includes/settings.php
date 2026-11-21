@@ -10,6 +10,7 @@ function settingsDefaults() {
             'forum_closed'         => ['bool', false, 'general'],
             'forum_closed_message' => ['string', 'Форум временно закрыт для новых сообщений', 'general'],
             'registration_enabled' => ['bool', true, 'general'],
+            'email_notifications'  => ['bool', false, 'general'],
             // content limits
             'title_min'            => ['int', 5,     'content'],
             'title_max'            => ['int', 200,   'content'],
@@ -53,6 +54,8 @@ function settingsDefaults() {
             'rl_edit_max'       => ['int', 20,   'limits'],
             'rl_edit_window'    => ['int', 600,  'limits'],
             'online_window'     => ['int', 900,  'limits'],
+            'rl_forgot_max'     => ['int', 3,    'limits'],
+            'rl_forgot_window'  => ['int', 3600, 'limits'],
         ];
     }
     return $defaults;

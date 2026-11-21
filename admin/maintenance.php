@@ -72,6 +72,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             setFlashMessage('success', "Удалено записей rate_limits: $n");
             break;
 
+        case 'clean_sessions':
+            $n = $db->exec("DELETE FROM user_sessions WHERE expires_at < NOW()");
+            logModeration('maint_clean', 'forum', 0, "Сессии: удалено протухших записей — $n");
+            setFlashMessage('success', "Удалено протухших сессий: $n");
+            break;
+
         case 'clean_searchlog':
             $n = $db->exec("DELETE FROM search_log WHERE created_at < NOW() - INTERVAL 90 DAY");
             logModeration('maint_clean', 'forum', 0, "Журнал поиска: удалено записей — $n");
@@ -166,6 +172,7 @@ $sizes = [
     'rate_limits'   => (int)$db->query("SELECT COUNT(*) FROM rate_limits")->fetchColumn(),
     'search_log'    => (int)$db->query("SELECT COUNT(*) FROM search_log")->fetchColumn(),
     'notifications' => (int)$db->query("SELECT COUNT(*) FROM notifications WHERE is_read = 1")->fetchColumn(),
+    'sessions'      => (int)$db->query("SELECT COUNT(*) FROM user_sessions")->fetchColumn(),
 ];
 
 require_once __DIR__ . '/../includes/header.php';
@@ -209,6 +216,12 @@ adminOpen('maintenance');
             <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
             <input type="hidden" name="op" value="clean_notifications">
             <span>Прочитанные уведомления старше 30 дней (<?= $sizes['notifications'] ?> прочитанных)</span>
+            <button class="btn btn-sm btn-outline">Очистить</button>
+        </form>
+        <form method="POST" class="admin-clean-row">
+            <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
+            <input type="hidden" name="op" value="clean_sessions">
+            <span>Протухшие сессии user_sessions (<?= $sizes['sessions'] ?> записей всего)</span>
             <button class="btn btn-sm btn-outline">Очистить</button>
         </form>
     </div>

@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/notifications.php';
+require_once __DIR__ . '/../includes/visibility.php';
 
 if (!isLoggedIn()) redirect('/auth/login.php');
 enforceActiveUser();
@@ -14,16 +15,11 @@ $uid = currentUserId();
 $topicId = (int)($_POST['topic_id'] ?? 0);
 $back = '/topic.php?id=' . $topicId;
 
-// Видимость темы: скрытые/неактивные разделы не подтверждают своё существование.
-$staffFlag = isModerator() ? 1 : 0;
-$stmt = $db->prepare("
-    SELECT t.id FROM topics t
-    JOIN forums f ON f.id = t.forum_id
-    JOIN categories c ON c.id = f.category_id
-    WHERE t.id = ? AND f.is_active = 1 AND c.is_active = 1 AND (t.is_hidden = 0 OR ? = 1)
-");
-$stmt->execute([$topicId, $staffFlag]);
-if (!$stmt->fetch()) { setFlashMessage('error', 'Тема не найдена'); redirect('/index.php'); }
+// Видимость темы — единые правила (скрытые не подтверждают существование)
+if (!topicVisible($topicId)) {
+    setFlashMessage('error', 'Тема не найдена');
+    redirect('/index.php');
+}
 
 try {
     $stmt = $db->prepare("SELECT 1 FROM topic_subscriptions WHERE user_id = ? AND topic_id = ?");

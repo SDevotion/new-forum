@@ -84,9 +84,10 @@ if ($attachErrors) {
     redirect($backUrl);
 }
 
-// Защита от дублей (двойная отправка / обновление страницы; учитываем и файлы)
+// Защита от дублей (двойная отправка / обновление страницы; учитываем и файлы).
+// Хэш живёт в user_sessions.payload; список ограничен 200 темами (FIFO).
 $hash = md5($content . serialize(array_map(fn($f) => [$f['name'], $f['size']], $attachFiles)));
-if (isset($_SESSION['last_post_hash'][$topicId]) && $_SESSION['last_post_hash'][$topicId] === $hash) {
+if (($_SESSION['last_post_hash'][$topicId] ?? null) === $hash) {
     setFlashMessage('info', 'Такое сообщение уже отправлено');
     redirect($backUrl);
 }
@@ -103,7 +104,13 @@ try {
         setFlashMessage('info', 'Ответ опубликован, но часть вложений не удалось сохранить');
     }
 
+    if (!isset($_SESSION['last_post_hash']) || !is_array($_SESSION['last_post_hash'])) {
+        $_SESSION['last_post_hash'] = [];
+    }
     $_SESSION['last_post_hash'][$topicId] = $hash;
+    if (count($_SESSION['last_post_hash']) > 200) {
+        $_SESSION['last_post_hash'] = array_slice($_SESSION['last_post_hash'], -200, null, true);
+    }
 
     // Подписка автора ответа на тему + рассылка уведомлений
     subscribeTopic($currentUser['id'], $topicId);

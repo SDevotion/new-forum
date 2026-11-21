@@ -45,7 +45,7 @@ try {
     $db->commit();
     // файлы с диска — только после успешного commit
     foreach ($attachRows as $ar) attachUnlink($ar['stored_name']);
-    unset($_SESSION['last_post_hash'][$topicId]);
+    unset($_SESSION['last_post_hash'][$topicId]); // антидубль снят: пост удалён осознанно
     setFlashMessage('success', 'Сообщение удалено');
 } catch (PDOException $e) {
     if ($db->inTransaction()) $db->rollBack();

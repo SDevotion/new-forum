@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/permissions.php';
 require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/attachments.php';
+require_once __DIR__ . '/../includes/counters.php';
 requireModerator();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') redirect('/moderation/index.php');
@@ -53,30 +54,18 @@ try {
             if (!$stmt->fetch()) done('Раздел не найден', $back, 'error');
             if ((int)$t['forum_id'] === $forumId) done('Тема уже в этом разделе', $back, 'info');
 
-            // Вес — фактический COUNT ответов, а не денормализованный replies_count
-            // (он может дрейфовать из-за каскадных удалений без триггеров).
+            // Вес — фактический COUNT ответов, а не денормализованный replies_count.
             $st = $db->prepare("SELECT COUNT(*) FROM posts WHERE topic_id = ?");
             $st->execute([$id]);
             $weight = (int)$st->fetchColumn() + 1;
 
             $db->beginTransaction();
             $db->prepare("UPDATE topics SET forum_id = ? WHERE id = ?")->execute([$forumId, $id]);
-            $db->prepare("UPDATE forums SET topics_count = GREATEST(topics_count - 1, 0), posts_count = GREATEST(posts_count - ?, 0) WHERE id = ?")
-               ->execute([$weight, $t['forum_id']]);
-            $db->prepare("UPDATE forums SET topics_count = topics_count + 1, posts_count = posts_count + ? WHERE id = ?")
-               ->execute([$weight, $forumId]);
-            foreach ([(int)$t['forum_id'], $forumId] as $fid) {
-                $st = $db->prepare("
-                    SELECT p.id FROM posts p
-                    JOIN topics t ON t.id = p.topic_id
-                    WHERE t.forum_id = ?
-                    ORDER BY p.created_at DESC, p.id DESC LIMIT 1
-                ");
-                $st->execute([$fid]);
-                $lastId = $st->fetchColumn() ?: null;
-                $db->prepare("UPDATE forums SET last_post_id = ? WHERE id = ?")->execute([$lastId, $fid]);
-            }
             $db->commit();
+
+            // Явный пересчёт обоих разделов (надёжнее инкрементов).
+            recountForum((int)$t['forum_id']);
+            recountForum($forumId);
 
             logModeration('topic_move', 'topic', $id, 'из #' . $t['forum_id'] . ' в #' . $forumId);
             done('Тема перенесена', $back);
@@ -84,9 +73,16 @@ try {
         }
 
         case 'topic_delete': {
-            $stmt = $db->prepare("SELECT id FROM topics WHERE id = ?");
+            $stmt = $db->prepare("SELECT id, forum_id, user_id FROM topics WHERE id = ?");
             $stmt->execute([$id]);
-            if (!$stmt->fetch()) done('Тема не найдена', $back, 'error');
+            $topicRow = $stmt->fetch();
+            if (!$topicRow) done('Тема не найдена', $back, 'error');
+
+            // Авторы ответов — ДО удаления (каскад сотрёт посты без триггеров).
+            $st = $db->prepare("SELECT DISTINCT user_id FROM posts WHERE topic_id = ?");
+            $st->execute([$id]);
+            $affectedUsers = $st->fetchAll(PDO::FETCH_COLUMN);
+            $affectedUsers[] = (int)$topicRow['user_id'];
 
             $attachNames = attachCollectTopicTree($id);
             $db->beginTransaction();
@@ -104,6 +100,11 @@ try {
             $db->prepare("DELETE FROM topics WHERE id = ?")->execute([$id]);
             $db->commit();
             foreach ($attachNames as $sn) attachUnlink($sn);
+
+            // Каскад удалил посты БЕЗ триггеров — пересчитываем явно.
+            recountForum((int)$topicRow['forum_id']);
+            recountUsers($affectedUsers);
+
             logModeration('topic_delete', 'topic', $id, $reason);
             done('Тема удалена', '/index.php');
             break;
@@ -161,8 +162,6 @@ try {
             $new = $target['is_active'] ? 0 : 1;
             $db->prepare("UPDATE users SET is_active = ? WHERE id = ?")->execute([$new, $id]);
 
-            // Бан = немедленная инвалидация ВСЕХ сессий пользователя.
-            // Без этого забаненный продолжал работать через POST/API до рендера страницы.
             if (!$new) {
                 $db->prepare("DELETE FROM user_sessions WHERE user_id = ?")->execute([$id]);
             }
@@ -179,7 +178,6 @@ try {
             if ($id === (int)$me['id']) done('Нельзя менять свою роль', $back, 'error');
 
             $db->prepare("UPDATE users SET role = ? WHERE id = ?")->execute([$role, $id]);
-            // Понижение роли тоже гасим сессии: права применяются мгновенно.
             $db->prepare("DELETE FROM user_sessions WHERE user_id = ?")->execute([$id]);
             logModeration('user_role', 'user', $id, $role);
             done('Роль обновлена', $back);

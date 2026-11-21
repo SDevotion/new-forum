@@ -21,6 +21,21 @@ define('FORCE_SECURE_COOKIES', false);
 // Единая таймзона приложения и соединения MySQL (иначе даты «уезжают»).
 define('APP_TIMEZONE', 'Europe/Moscow');
 
+// ===== Почта (восстановление пароля, email-уведомления) =====
+// Базовый URL сайта без слэша в конце — используется в ссылках писем.
+define('APP_URL', 'https://forum.example.com');
+// Адрес отправителя. Должен быть разрешён вашим SMTP/хостингом.
+define('MAIL_FROM', 'noreply@forum.example.com');
+define('MAIL_FROM_NAME', 'ForumHub');
+// Способ отправки: 'mail' (PHP mail()) или 'smtp'.
+define('MAIL_TRANSPORT', 'mail');
+// SMTP-параметры (если MAIL_TRANSPORT = 'smtp')
+define('SMTP_HOST', 'localhost');
+define('SMTP_PORT', 587);
+define('SMTP_USER', '');
+define('SMTP_PASS', '');
+define('SMTP_SECURE', 'tls'); // 'tls', 'ssl' или ''
+
 date_default_timezone_set(APP_TIMEZONE);
 
 if (APP_DEBUG) {

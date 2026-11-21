@@ -4,29 +4,32 @@ require_once __DIR__ . '/../includes/ratelimit.php';
 
 if (isLoggedIn()) redirect('/index.php');
 
-$token = $_GET['token'] ?? ($_POST['token'] ?? '');
 $pageTitle = 'Новый пароль';
 $errors = [];
-$done = false;
+$done = isset($_GET['done']);
 $validToken = false;
 $userId = 0;
+$token = '';
 
 $db = Database::getInstance()->getConnection();
 
-// Проверка токена (по хэшу)
-if (is_string($token) && preg_match('/^[a-f0-9]{64}$/', $token)) {
-    $stmt = $db->prepare("
-        SELECT r.user_id FROM password_resets r
-        JOIN users u ON u.id = r.user_id AND u.is_active = 1
-        WHERE r.token_hash = ? AND r.expires_at > NOW()
-    ");
-    $stmt->execute([hash('sha256', $token)]);
-    $userId = (int)$stmt->fetchColumn();
-    $validToken = $userId > 0;
-}
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Токен приходит только в теле POST (не в URL) — не утекает в Referer/логи.
+    $token = $_POST['token'] ?? '';
+    if (is_string($token) && preg_match('/^[a-f0-9]{64}$/', $token)) {
+        $stmt = $db->prepare("
+            SELECT r.user_id FROM password_resets r
+            JOIN users u ON u.id = r.user_id AND u.is_active = 1
+            WHERE r.token_hash = ? AND r.expires_at > NOW()
+        ");
+        $stmt->execute([hash('sha256', $token)]);
+        $userId = (int)$stmt->fetchColumn();
+        $validToken = $userId > 0;
+    }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $validToken) {
-    if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
+    if (!$validToken) {
+        $errors[] = 'Ссылка недействительна или истекла. Запросите восстановление заново.';
+    } elseif (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Недействительный запрос. Обновите страницу.';
     } elseif (!rateLimitCheck('reset', 5, 900, true)) {
         $errors[] = 'Слишком много попыток. Подождите 15 минут.';
@@ -48,16 +51,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $validToken) {
                 $db->prepare("UPDATE users SET password_hash = ? WHERE id = ?")
                    ->execute([password_hash($new, PASSWORD_DEFAULT), $userId]);
                 $db->prepare("DELETE FROM password_resets WHERE user_id = ?")->execute([$userId]);
-                // Гасим все сессии: старый пароль больше не должен работать нигде
                 $db->prepare("DELETE FROM user_sessions WHERE user_id = ?")->execute([$userId]);
                 $db->commit();
-                $done = true;
+                // PRG: уходим с URL, содержащего токен; результат показываем на чистом URL.
+                redirect('/auth/reset.php?done=1');
             } catch (PDOException $e) {
                 if ($db->inTransaction()) $db->rollBack();
                 error_log('Reset error: ' . $e->getMessage());
                 $errors[] = 'Ошибка при сохранении. Попробуйте позже.';
             }
         }
+    }
+} else {
+    // GET: токен в URL только для первичного перехода из письма.
+    $token = $_GET['token'] ?? '';
+    if (is_string($token) && preg_match('/^[a-f0-9]{64}$/', $token)) {
+        $stmt = $db->prepare("
+            SELECT r.user_id FROM password_resets r
+            JOIN users u ON u.id = r.user_id AND u.is_active = 1
+            WHERE r.token_hash = ? AND r.expires_at > NOW()
+        ");
+        $stmt->execute([hash('sha256', $token)]);
+        $userId = (int)$stmt->fetchColumn();
+        $validToken = $userId > 0;
     }
 }
 
@@ -71,7 +87,7 @@ require_once __DIR__ . '/../includes/header.php';
         <?php if ($done): ?>
             <div class="alert alert-success">Пароль изменён. Теперь вы можете войти с новым паролем.</div>
             <div class="auth-footer"><a href="/auth/login.php">Войти</a></div>
-        <?php elseif (!$validToken): ?>
+        <?php elseif (!$validToken && !$errors): ?>
             <div class="alert alert-error">Ссылка недействительна или истекла. Запросите восстановление заново.</div>
             <div class="auth-footer"><a href="/auth/forgot.php">Запросить новую ссылку</a></div>
         <?php else: ?>
@@ -79,7 +95,9 @@ require_once __DIR__ . '/../includes/header.php';
             <?php if ($errors): ?>
                 <div class="alert alert-error"><ul class="error-list"><?php foreach ($errors as $e): ?><li><?= escape($e) ?></li><?php endforeach; ?></ul></div>
             <?php endif; ?>
-            <form method="POST" action="" class="auth-form">
+            <?php if ($validToken): ?>
+            <!-- Форма POSTит на чистый URL: токен только в hidden-поле, не в query -->
+            <form method="POST" action="/auth/reset.php" class="auth-form">
                 <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
                 <input type="hidden" name="token" value="<?= escape($token) ?>">
                 <div class="form-group">
@@ -92,6 +110,9 @@ require_once __DIR__ . '/../includes/header.php';
                 </div>
                 <button type="submit" class="btn btn-primary btn-block">Сохранить пароль</button>
             </form>
+            <?php else: ?>
+                <div class="auth-footer"><a href="/auth/forgot.php">Запросить новую ссылку</a></div>
+            <?php endif; ?>
         <?php endif; ?>
     </div>
 </div>

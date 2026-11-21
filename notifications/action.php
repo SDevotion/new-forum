@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/permissions.php';
 
 if (!isLoggedIn()) redirect('/auth/login.php');
+enforceActiveUser();
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') redirect('/notifications.php');
 if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
     setFlashMessage('error', 'Недействительный запрос');

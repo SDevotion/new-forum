@@ -146,6 +146,18 @@ try {
                 done($r ? 'Жалоба уже обработана другим модератором' : 'Жалоба не найдена', $back, 'info');
             }
             logModeration($action, $r['target_type'], (int)$r['target_id'], $reason);
+
+            // Уведомляем автора жалобы о результате
+            $st = $db->prepare("SELECT user_id FROM reports WHERE id = ?");
+            $st->execute([$id]);
+            $reporterId = (int)$st->fetchColumn();
+            if ($reporterId > 0) {
+                $resultText = $status === 'resolved'
+                    ? 'Ваша жалоба рассмотрена и принята. Спасибо за помощь в модерации.'
+                    : 'Ваша жалоба рассмотрена и отклонена: нарушений не обнаружено.';
+                notifyUser($reporterId, 'moderation', $me['id'], null, null, $resultText);
+            }
+
             done($status === 'resolved' ? 'Жалоба принята' : 'Жалоба отклонена', $back);
             break;
         }

@@ -3,9 +3,9 @@
 -- https://www.phpmyadmin.net/
 --
 -- Хост: localhost
--- Время создания: Ноя 19 2026 г., 20:29
+-- Время создания: Ноя 21 2026 г., 15:51
 -- Версия сервера: 8.4.11-11
--- Версия PHP: 8.3.36
+-- Версия PHP: 8.3.37
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
@@ -423,6 +423,7 @@ CREATE TABLE `user_sessions` (
   `session_token` varchar(255) NOT NULL,
   `ip_address` varchar(45) DEFAULT NULL,
   `user_agent` text,
+  `payload` mediumtext,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `expires_at` timestamp NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -564,8 +565,8 @@ ALTER TABLE `users`
 ALTER TABLE `user_sessions`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `session_token` (`session_token`),
-  ADD KEY `user_id` (`user_id`),
-  ADD KEY `idx_token` (`session_token`);
+  ADD KEY `idx_token` (`session_token`),
+  ADD KEY `idx_guest_seen` (`user_id`,`expires_at`);
 
 --
 -- AUTO_INCREMENT для сохранённых таблиц
@@ -719,12 +720,6 @@ ALTER TABLE `topics`
 ALTER TABLE `topic_subscriptions`
   ADD CONSTRAINT `topic_subscriptions_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
   ADD CONSTRAINT `topic_subscriptions_ibfk_2` FOREIGN KEY (`topic_id`) REFERENCES `topics` (`id`) ON DELETE CASCADE;
-
---
--- Ограничения внешнего ключа таблицы `user_sessions`
---
-ALTER TABLE `user_sessions`
-  ADD CONSTRAINT `user_sessions_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

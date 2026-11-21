@@ -43,10 +43,9 @@ if (!preg_match('/^[a-f0-9]{32}\.[a-z0-9]{2,5}$/', $att['stored_name'])) {
 $path = __DIR__ . '/assets/uploads/attachments/' . $att['stored_name'];
 if (!is_file($path)) { http_response_code(404); exit('Файл отсутствует'); }
 
-// Счётчик скачиваний (не чаще раза за сессию на файл)
-if (empty($_SESSION['attach_dl'][$id])) {
+// Счётчик скачиваний (не чаще раза за сессию на файл; FIFO-лимит 500 отметок)
+if (sessionMarkOnce('attach_dl', $id)) {
     $db->prepare("UPDATE attachments SET downloads = downloads + 1 WHERE id = ?")->execute([$id]);
-    $_SESSION['attach_dl'][$id] = true;
 }
 
 $isImage = (bool)$att['is_image'];

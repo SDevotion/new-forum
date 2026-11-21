@@ -36,12 +36,11 @@ if (!$topic || ($topic['is_hidden'] && !$isStaff)) {
     exit;
 }
 
-// Счётчик просмотров (не чаще раза за сессию; автор и стафф не считаются)
-$viewedKey = 'viewed_topics';
+// Счётчик просмотров (не чаще раза за сессию; автор и стафф не считаются).
+// Отметки живут в user_sessions.payload, список ограничен 500 темами (FIFO).
 $isAuthorView = isLoggedIn() && (int)$_SESSION['user_id'] === (int)$topic['user_id'];
-if (!$isStaff && !$isAuthorView && !isset($_SESSION[$viewedKey][$topicId])) {
+if (!$isStaff && !$isAuthorView && sessionMarkOnce('viewed_topics', $topicId)) {
     $db->prepare("UPDATE topics SET views_count = views_count + 1 WHERE id = ?")->execute([$topicId]);
-    $_SESSION[$viewedKey][$topicId] = true;
     $topic['views_count']++;
 }
 

@@ -7,7 +7,7 @@ if (!isLoggedIn()) { setFlashMessage('error', 'Необходимо войти')
 
 $pageTitle = 'Уведомления';
 $db = Database::getInstance()->getConnection();
-$uid = (int)$_SESSION['user_id'];
+$uid = currentUserId();
 
 $filter = $_GET['filter'] ?? 'all';
 if (!in_array($filter, ['all', 'unread'], true)) $filter = 'all';

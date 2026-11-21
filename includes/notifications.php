@@ -76,6 +76,40 @@ function notifyUsersBatch(array $userIds, $type, $actorId, $topicId, $postId, $e
         ";
         $params = array_merge([$type, (int)$actorId, (int)$topicId, $postId, $excerptVal], $userIds);
         $db->prepare($sql)->execute($params);
+
+        // Email-доставка (если включена глобально). Только что вставленные строки
+        // определяем по отсутствию is_read=1 — проще: шлём всем подходящим recipients,
+        // INSERT IGNORE уже отсёк дубли, а письмо дублем не страшно (редкое событие).
+        if (setting('email_notifications', false)) {
+            require_once __DIR__ . '/mailer.php';
+            $st = $db->prepare("
+                SELECT u.email, u.username FROM users u
+                WHERE u.id IN ($in) AND u.is_active = 1 $prefCond AND u.notify_email = 1
+            ");
+            $st->execute($userIds);
+            $recipients = $st->fetchAll();
+
+            $actorSt = $db->prepare("SELECT username FROM users WHERE id = ?");
+            $actorSt->execute([(int)$actorId]);
+            $actorName = $actorSt->fetchColumn() ?: 'Участник';
+
+            $topicSt = $db->prepare("SELECT title FROM topics WHERE id = ?");
+            $topicSt->execute([(int)$topicId]);
+            $topicTitle = $topicSt->fetchColumn() ?: '';
+
+            $kindLabel = ['reply' => 'Новый ответ', 'mention' => 'Вас упомянули', 'quote' => 'Вас процитировали'][$type] ?? 'Уведомление';
+            $link = topicUrl($topicId, $postId);
+
+            foreach ($recipients as $r) {
+                $body = "Здравствуйте, {$r['username']}!\n\n"
+                      . "$actorName: $kindLabel в теме «$topicTitle».\n\n"
+                      . ($excerptVal ? "$excerptVal\n\n" : '')
+                      . "Читать: $link\n\n"
+                      . "Отключить email-уведомления можно в настройках профиля.\n"
+                      . MAIL_FROM_NAME;
+                sendMail($r['email'], $kindLabel . ' — ' . MAIL_FROM_NAME, $body);
+            }
+        }
     } catch (PDOException $e) {
         error_log('Notify batch error: ' . $e->getMessage());
     }

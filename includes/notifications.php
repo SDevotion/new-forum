@@ -131,7 +131,7 @@ function unreadCount() {
     $db = Database::getInstance()->getConnection();
     $vis = notifVisibilityCond();
     $stmt = $db->prepare("SELECT COUNT(*) FROM notifications n WHERE n.user_id = ? AND n.is_read = 0 $vis");
-    $stmt->execute([$_SESSION['user_id']]);
+    $stmt->execute([currentUserId()]);
     return $c = (int)$stmt->fetchColumn();
 }
 
@@ -139,7 +139,7 @@ function isSubscribed($topicId) {
     if (!isLoggedIn()) return false;
     $db = Database::getInstance()->getConnection();
     $stmt = $db->prepare("SELECT 1 FROM topic_subscriptions WHERE user_id = ? AND topic_id = ?");
-    $stmt->execute([$_SESSION['user_id'], $topicId]);
+    $stmt->execute([currentUserId(), $topicId]);
     return (bool)$stmt->fetchColumn();
 }
 

@@ -15,7 +15,9 @@ function touchActivity() {
 
     $id = (int)$_SESSION['user_id'];
     $now = time();
-    if (isset($_SESSION['activity_ts']) && ($now - $_SESSION['activity_ts']) < 60) return;
+    // Троттлинг: не чаще раза в 60 сек, метка ставится ДО проверки записи,
+    // чтобы серия быстрых запросов не писала в users на каждый клик
+    if (isset($_SESSION['activity_ts']) && ($now - (int)$_SESSION['activity_ts']) < 60) return;
     $_SESSION['activity_ts'] = $now;
 
     try {
@@ -27,11 +29,14 @@ function touchActivity() {
 }
 
 /**
- * Гость помечается временем изменения файла сессии — отдельная таблица не нужна
+ * Отметка активности гостя: строка user_sessions (user_id = 0).
+ * created_at фиксирует первый визит, «свежесть» даёт expires_at,
+ * который обработчик продлевает на каждом запросе (скользящее окно).
+ * Чтобы гости учитывались в ONLINE_WINDOW, отдельно трогаем updated-метку.
  */
 function trackGuest() {
     if (isLoggedIn()) return;
-    $_SESSION['guest_seen'] = time();
+    $_SESSION['guest_seen'] = time(); // маркер для payload; свежесть — в expires_at
 }
 
 /**
@@ -49,27 +54,33 @@ function getOnlineList() {
         LIMIT 100
     ")->fetchAll();
 
-    // Гости — приблизительно, по свежим файлам сессий БЕЗ user_id
-    // (только файловый обработчик; кэш на запрос)
-    static $guestFiles = null;
-    if ($guestFiles === null) {
-        $guestFiles = 0;
-        if (ini_get('session.save_handler') === 'files') {
-            $sessDir = session_save_path() ?: sys_get_temp_dir();
-            if (is_dir($sessDir) && is_readable($sessDir)) {
-                $files = @glob($sessDir . '/sess_*');
-                if ($files) {
-                    $cut = time() - ONLINE_WINDOW;
-                    foreach ($files as $f) {
-                        if (@filemtime($f) < $cut) continue;
-                        $data = @file_get_contents($f);
-                        if ($data !== false && strpos($data, 'user_id|') === false) $guestFiles++;
-                    }
-                }
-            }
+    // Гости — строки user_sessions с user_id = 0, «тронутые» в пределах окна.
+    // Обработчик на каждом запросе продлевает expires_at на SESSION_LIFETIME,
+    // поэтому момент последнего визита = expires_at - SESSION_LIFETIME.
+    // Кэш на запрос.
+    static $guestCount = null;
+    if ($guestCount === null) {
+        try {
+            $stmt = $db->prepare("
+                SELECT COUNT(*) FROM user_sessions
+                WHERE user_id = 0
+                  AND expires_at > NOW()
+                  AND expires_at <= NOW() + INTERVAL ? SECOND
+                  AND expires_at >= NOW() + INTERVAL ? SECOND
+            ");
+            // последний визит в пределах ONLINE_WINDOW:
+            // (expires_at - SESSION_LIFETIME) >= NOW() - ONLINE_WINDOW
+            $stmt->execute([
+                SESSION_LIFETIME,
+                SESSION_LIFETIME - $w,
+            ]);
+            $guestCount = (int)$stmt->fetchColumn();
+        } catch (PDOException $e) {
+            error_log('Guest count error: ' . $e->getMessage());
+            $guestCount = 0;
         }
     }
-    $guests = $guestFiles;
+    $guests = $guestCount;
 
     return ['users' => $users, 'count' => count($users), 'guests' => $guests];
 }

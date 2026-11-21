@@ -21,7 +21,7 @@ function rateLimitIp() {
 function rateLimitCheck($action, $max, $windowSeconds, $byIp = false) {
     $db = Database::getInstance()->getConnection();
 
-    $uid = (!$byIp && isLoggedIn()) ? (int)$_SESSION['user_id'] : 0;
+    $uid = $byIp ? 0 : currentUserId();
     $ip  = rateLimitIp();
     $key = $uid > 0 ? 'u' . $uid : 'ip' . $ip;
 
@@ -45,7 +45,7 @@ function rateLimitCheck($action, $max, $windowSeconds, $byIp = false) {
  */
 function rateLimitRetryAfter($action, $windowSeconds, $byIp = false) {
     $db = Database::getInstance()->getConnection();
-    $uid = (!$byIp && isLoggedIn()) ? (int)$_SESSION['user_id'] : 0;
+    $uid = $byIp ? 0 : currentUserId();
     $key = $uid > 0 ? 'u' . $uid : 'ip' . rateLimitIp();
 
     $stmt = $db->prepare("

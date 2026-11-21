@@ -3,25 +3,23 @@
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/settings.php';
+require_once __DIR__ . '/session.php';
 
-// Запуск сессии с защищёнными cookie
-if (session_status() === PHP_SESSION_NONE) {
-    session_set_cookie_params([
-        'lifetime' => 0,
-        'path'     => '/',
-        'domain'   => '',
-        'secure'   => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
-        'httponly' => true,
-        'samesite' => 'Lax',
-    ]);
-    session_start();
-}
+// Запуск сессии: хранение в БД (user_sessions), защищённые cookie
+sessionBoot();
 
 /**
  * Проверка авторизации пользователя
  */
 function isLoggedIn() {
     return isset($_SESSION['user_id']) && !empty($_SESSION['user_id']);
+}
+
+/**
+ * ID текущего пользователя (0 для гостя) — единая точка чтения из сессии
+ */
+function currentUserId() {
+    return isLoggedIn() ? (int)$_SESSION['user_id'] : 0;
 }
 
 /**
@@ -54,8 +52,8 @@ function getCurrentUser() {
                 ]);
             }
             session_destroy();
-            // Новая короткая сессия только для flash-сообщения
-            session_start();
+            // Новая короткая гостевая сессия только для flash-сообщения
+            sessionBoot();
             session_regenerate_id(true);
             setFlashMessage('info', 'Сессия завершена: аккаунт недоступен');
             header('Location: /index.php');
@@ -118,6 +116,25 @@ function getFlashMessage() {
         return $message;
     }
     return null;
+}
+
+/**
+ * Отметка «уже сделано в этой сессии» с ограничением размера списка.
+ * Хранит последние $cap отметок (FIFO), чтобы payload сессии не рос бесконечно.
+ */
+function sessionMarkOnce($key, $id, $cap = 500) {
+    $id = (int)$id;
+    if (!isset($_SESSION[$key]) || !is_array($_SESSION[$key])) {
+        $_SESSION[$key] = [];
+    }
+    if (isset($_SESSION[$key][$id])) {
+        return false; // уже отмечено
+    }
+    $_SESSION[$key][$id] = time();
+    if (count($_SESSION[$key]) > $cap) {
+        $_SESSION[$key] = array_slice($_SESSION[$key], -$cap, null, true);
+    }
+    return true; // отмечено впервые
 }
 
 /**

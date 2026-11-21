@@ -11,7 +11,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !verifyCSRFToken($_POST['csrf_token
 // Запоминаем flash до уничтожения сессии
 $flash = ['type' => 'info', 'message' => 'Вы успешно вышли из системы'];
 
-// Уничтожение сессии
+// Уничтожение сессии: строка в user_sessions удаляется обработчиком (destroy)
 $_SESSION = [];
 session_destroy();
 
@@ -28,8 +28,9 @@ if (isset($_COOKIE[session_name()])) {
     ]);
 }
 
-// Новая короткая сессия только для flash-сообщения
-session_start();
+// Новая короткая гостевая сессия только для flash-сообщения
+// (в user_sessions появится строка user_id = 0, удалится сборщиком по expires_at)
+sessionBoot();
 session_regenerate_id(true);
 $_SESSION['flash_message'] = $flash;
 

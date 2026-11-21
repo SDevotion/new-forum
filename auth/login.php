@@ -38,7 +38,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt = $db->prepare("DELETE FROM rate_limits WHERE action = 'login' AND actor_key = ?");
                     $stmt->execute(['ip' . rateLimitIp()]);
 
+                    // Ротация ID против session fixation: старая (гостевая) строка
+                    // в user_sessions удаляется через destroy(), новая создастся в write()
                     session_regenerate_id(true);
+                    unset($_SESSION['guest_seen'], $_SESSION['viewed_topics'], $_SESSION['attach_dl']);
                     $_SESSION['user_id'] = $user['id'];
                     $_SESSION['username'] = $user['username'];
                     

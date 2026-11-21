@@ -27,6 +27,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     redirect('/admin/structure.php');
                 }
 
+            } elseif ($action === 'edit_category') {
+                $id = (int)($_POST['id'] ?? 0);
+                $title = trim($_POST['title'] ?? '');
+                $desc = trim($_POST['description'] ?? '');
+                $sort = (int)($_POST['sort_order'] ?? 0);
+                if (mb_strlen($title) < 2 || mb_strlen($title) > 100) {
+                    $errors[] = 'Название категории: 2–100 символов';
+                } else {
+                    $db->prepare("UPDATE categories SET title = ?, description = ?, sort_order = ? WHERE id = ?")
+                       ->execute([$title, $desc ?: null, $sort, $id]);
+                    logModeration('category_edit', 'category', $id, $title);
+                    setFlashMessage('success', 'Категория обновлена');
+                    redirect('/admin/structure.php');
+                }
+
             } elseif ($action === 'add_forum') {
                 $cat = (int)($_POST['category_id'] ?? 0);
                 $title = trim($_POST['title'] ?? '');
@@ -46,6 +61,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                        ->execute([$cat, $title, $desc ?: null, mb_substr($icon, 0, 10), $sort]);
                     logModeration('forum_add', 'forum', (int)$db->lastInsertId(), $title);
                     setFlashMessage('success', 'Раздел создан');
+                    redirect('/admin/structure.php');
+                }
+
+            } elseif ($action === 'edit_forum') {
+                $id = (int)($_POST['id'] ?? 0);
+                $cat = (int)($_POST['category_id'] ?? 0);
+                $title = trim($_POST['title'] ?? '');
+                $desc = trim($_POST['description'] ?? '');
+                $icon = trim($_POST['icon'] ?? '💬');
+                $sort = (int)($_POST['sort_order'] ?? 0);
+
+                $st = $db->prepare("SELECT category_id FROM forums WHERE id = ?");
+                $st->execute([$id]);
+                $oldCat = (int)$st->fetchColumn();
+
+                $stc = $db->prepare("SELECT id FROM categories WHERE id = ?");
+                $stc->execute([$cat]);
+
+                if (mb_strlen($title) < 2 || mb_strlen($title) > 150) {
+                    $errors[] = 'Название раздела: 2–150 символов';
+                } elseif (!$stc->fetch()) {
+                    $errors[] = 'Категория не найдена';
+                } else {
+                    $db->prepare("UPDATE forums SET category_id = ?, title = ?, description = ?, icon = ?, sort_order = ? WHERE id = ?")
+                       ->execute([$cat, $title, $desc ?: null, mb_substr($icon, 0, 10), $sort, $id]);
+                    // При смене категории счётчики обеих не меняются (темы остаются в разделе),
+                    // но на всякий случай пересчитаем затронутый раздел.
+                    recountForum($id);
+                    logModeration('forum_edit', 'forum', $id, $title);
+                    setFlashMessage('success', 'Раздел обновлён');
                     redirect('/admin/structure.php');
                 }
 
@@ -174,6 +219,22 @@ adminOpen('structure');
             </div>
         </div>
 
+        <!-- Редактирование категории -->
+        <details class="admin-edit-details">
+            <summary class="btn-link">✏️ Редактировать категорию</summary>
+            <form method="POST" class="admin-inline-edit">
+                <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
+                <input type="hidden" name="action" value="edit_category">
+                <input type="hidden" name="id" value="<?= (int)$c['id'] ?>">
+                <div class="form-row">
+                    <div class="form-group"><label>Название</label><input type="text" name="title" class="form-control" value="<?= escape($c['title']) ?>" maxlength="100" required></div>
+                    <div class="form-group"><label>Порядок</label><input type="number" name="sort_order" class="form-control" value="<?= (int)$c['sort_order'] ?>"></div>
+                </div>
+                <div class="form-group"><label>Описание</label><input type="text" name="description" class="form-control" value="<?= escape($c['description'] ?? '') ?>"></div>
+                <button class="btn btn-sm btn-primary">Сохранить</button>
+            </form>
+        </details>
+
         <?php if (empty($forums)): ?>
             <div class="admin-empty-inline">Разделов нет</div>
         <?php else: ?>
@@ -200,6 +261,31 @@ adminOpen('structure');
                         </form>
                     </div>
                 </div>
+                <details class="admin-edit-details">
+                    <summary class="btn-link">✏️ Редактировать раздел</summary>
+                    <form method="POST" class="admin-inline-edit">
+                        <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
+                        <input type="hidden" name="action" value="edit_forum">
+                        <input type="hidden" name="id" value="<?= (int)$f['id'] ?>">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Категория</label>
+                                <select name="category_id" class="form-control">
+                                    <?php foreach ($categories as $cc): ?>
+                                        <option value="<?= (int)$cc['id'] ?>" <?= (int)$cc['id'] === (int)$f['category_id'] ? 'selected' : '' ?>><?= escape($cc['title']) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="form-group"><label>Название</label><input type="text" name="title" class="form-control" value="<?= escape($f['title']) ?>" maxlength="150" required></div>
+                        </div>
+                        <div class="form-group"><label>Описание</label><input type="text" name="description" class="form-control" value="<?= escape($f['description'] ?? '') ?>"></div>
+                        <div class="form-row">
+                            <div class="form-group"><label>Иконка</label><input type="text" name="icon" class="form-control" value="<?= escape($f['icon']) ?>" maxlength="10"></div>
+                            <div class="form-group"><label>Порядок</label><input type="number" name="sort_order" class="form-control" value="<?= (int)$f['sort_order'] ?>"></div>
+                        </div>
+                        <button class="btn btn-sm btn-primary">Сохранить</button>
+                    </form>
+                </details>
             <?php endforeach; ?>
         <?php endif; ?>
     </div>

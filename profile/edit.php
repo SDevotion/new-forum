@@ -1,11 +1,13 @@
 <?php
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/avatar.php';
+require_once __DIR__ . '/../includes/ratelimit.php';
 
 if (!isLoggedIn()) {
     setFlashMessage('error', 'Необходимо войти в систему');
     redirect('/auth/login.php');
 }
+enforceActiveUser();
 
 $db = Database::getInstance()->getConnection();
 $currentUser = getCurrentUser();
@@ -38,36 +40,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $new = $_POST['new_password'] ?? '';
             $confirm = $_POST['new_password_confirm'] ?? '';
 
-            $stmt = $db->prepare("SELECT password_hash FROM users WHERE id = ?");
-            $stmt->execute([$userId]);
-            $hash = $stmt->fetchColumn();
+            // Антибрутфорс старого пароля: не более 5 попыток за 15 минут на аккаунт.
+            if (!rateLimitCheck('password_change', 5, 900)) {
+                $passErrors[] = 'Слишком много попыток смены пароля. Подождите ' . ceil(rateLimitRetryAfter('password_change', 900) / 60) . ' мин.';
+            } else {
+                $stmt = $db->prepare("SELECT password_hash FROM users WHERE id = ?");
+                $stmt->execute([$userId]);
+                $hash = $stmt->fetchColumn();
 
-            if (!password_verify($old, $hash)) {
-                $passErrors[] = 'Текущий пароль указан неверно';
-            }
-            if (mb_strlen($new) < setting('password_min', 6)) {
-                $passErrors[] = 'Новый пароль должен содержать минимум ' . setting('password_min', 6) . ' символов';
-            }
-            if ($new !== $confirm) {
-                $passErrors[] = 'Новые пароли не совпадают';
-            }
-            if ($old === $new && $old !== '') {
-                $passErrors[] = 'Новый пароль должен отличаться от текущего';
-            }
+                if (!is_string($old) || !is_string($new) || !is_string($confirm)) {
+                    $passErrors[] = 'Некорректные данные формы';
+                } else {
+                    if (!password_verify($old, $hash)) {
+                        $passErrors[] = 'Текущий пароль указан неверно';
+                    }
+                    if (mb_strlen($new) < setting('password_min', 6)) {
+                        $passErrors[] = 'Новый пароль должен содержать минимум ' . setting('password_min', 6) . ' символов';
+                    }
+                    if (strlen($new) > 4096) {
+                        $passErrors[] = 'Новый пароль слишком длинный (максимум 4096 байт)';
+                    }
+                    if ($new !== $confirm) {
+                        $passErrors[] = 'Новые пароли не совпадают';
+                    }
+                    if ($old === $new && $old !== '') {
+                        $passErrors[] = 'Новый пароль должен отличаться от текущего';
+                    }
+                }
 
-            if (empty($passErrors)) {
-                $stmt = $db->prepare("UPDATE users SET password_hash = ? WHERE id = ?");
-                $stmt->execute([password_hash($new, PASSWORD_DEFAULT), $userId]);
+                if (empty($passErrors)) {
+                    $stmt = $db->prepare("UPDATE users SET password_hash = ? WHERE id = ?");
+                    $stmt->execute([password_hash($new, PASSWORD_DEFAULT), $userId]);
 
-                // Ротация ID: старая строка user_sessions удаляется, новая запишется в конце запроса
-                session_regenerate_id(true);
-                // Завершаем все остальные сессии пользователя (кроме текущей)
-                $db->prepare("DELETE FROM user_sessions WHERE user_id = ? AND session_token <> ?")
-                   ->execute([$userId, session_id()]);
-                unset($_SESSION['csrf_token']); // новый CSRF-токен после смены пароля
-                generateCSRFToken();
-                setFlashMessage('success', 'Пароль успешно изменён');
-                redirect('/profile/edit.php');
+                    session_regenerate_id(true);
+                    $db->prepare("DELETE FROM user_sessions WHERE user_id = ? AND session_token <> ?")
+                       ->execute([$userId, session_id()]);
+                    unset($_SESSION['csrf_token']);
+                    generateCSRFToken();
+                    rateLimitClear('password_change', 'u' . $userId);
+                    setFlashMessage('success', 'Пароль успешно изменён');
+                    redirect('/profile/edit.php');
+                }
             }
 
         // --- Удаление аватара ---
@@ -103,7 +116,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
-            // Аватар
             $newAvatar = null;
             if (empty($errors)) {
                 [$ok, $msg, $path] = handleAvatarUpload($_FILES['avatar'] ?? [], $userId);
@@ -256,17 +268,17 @@ require_once __DIR__ . '/../includes/header.php';
 
         <div class="form-group">
             <label for="old_password">Текущий пароль</label>
-            <input type="password" id="old_password" name="old_password" class="form-control" required>
+            <input type="password" id="old_password" name="old_password" class="form-control" maxlength="4096" required>
         </div>
 
         <div class="form-row">
             <div class="form-group">
                 <label for="new_password">Новый пароль</label>
-                <input type="password" id="new_password" name="new_password" class="form-control" minlength="<?= setting('password_min', 6) ?>" required>
+                <input type="password" id="new_password" name="new_password" class="form-control" minlength="<?= setting('password_min', 6) ?>" maxlength="4096" required>
             </div>
             <div class="form-group">
                 <label for="new_password_confirm">Повторите новый</label>
-                <input type="password" id="new_password_confirm" name="new_password_confirm" class="form-control" minlength="<?= setting('password_min', 6) ?>" required>
+                <input type="password" id="new_password_confirm" name="new_password_confirm" class="form-control" minlength="<?= setting('password_min', 6) ?>" maxlength="4096" required>
             </div>
         </div>
 

@@ -79,7 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 try {
                     attachStore($attachFiles, 'topic', (int)$topicId, (int)$currentUser['id']);
-                } catch (RuntimeException $e) {
+                } catch (Throwable $e) {
                     error_log('Attach store error: ' . $e->getMessage());
                     setFlashMessage('info', 'Тема создана, но часть вложений не удалось сохранить');
                 }

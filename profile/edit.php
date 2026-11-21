@@ -13,7 +13,7 @@ $db = Database::getInstance()->getConnection();
 $currentUser = getCurrentUser();
 $userId = (int)$currentUser['id'];
 
-$stmt = $db->prepare("SELECT username, email, avatar, bio, location, website, signature, notify_replies, notify_mentions FROM users WHERE id = ?");
+$stmt = $db->prepare("SELECT username, email, avatar, bio, location, website, signature, notify_replies, notify_mentions, notify_email FROM users WHERE id = ?");
 $stmt->execute([$userId]);
 $user = $stmt->fetch();
 
@@ -27,6 +27,7 @@ $website   = $user['website'] ?? '';
 $signature = $user['signature'] ?? '';
 $notifyReplies = (bool)$user['notify_replies'];
 $notifyMentions = (bool)$user['notify_mentions'];
+$notifyEmail = (bool)($user['notify_email'] ?? false);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
@@ -98,6 +99,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $signature = trim($_POST['signature'] ?? '');
             $notifyReplies = isset($_POST['notify_replies']);
             $notifyMentions = isset($_POST['notify_mentions']);
+            $notifyEmail = isset($_POST['notify_email']);
 
             if (mb_strlen($bio) > setting('bio_max', 1000)) {
                 $errors[] = 'О себе: максимум ' . setting('bio_max', 1000) . ' символов';
@@ -130,26 +132,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     if ($newAvatar !== null) {
                         $stmt = $db->prepare("
-                            UPDATE users 
-                            SET bio = ?, location = ?, website = ?, signature = ?, avatar = ?,
-                                notify_replies = ?, notify_mentions = ?
+                            UPDATE users SET bio = ?, location = ?, website = ?, signature = ?, avatar = ?,
+                                notify_replies = ?, notify_mentions = ?, notify_email = ?
                             WHERE id = ?
                         ");
                         $stmt->execute([
                             $bio ?: null, $location ?: null, $website ?: null,
-                            $signature ?: null, $newAvatar,
-                            (int)$notifyReplies, (int)$notifyMentions, $userId
+                            $signature ?: null, $newAvatar, (int)$notifyReplies, (int)$notifyMentions, (int)$notifyEmail, $userId
                         ]);
                         deleteAvatarFile($user['avatar']);
                     } else {
                         $stmt = $db->prepare("
                             UPDATE users SET bio = ?, location = ?, website = ?, signature = ?,
-                                notify_replies = ?, notify_mentions = ?
+                                notify_replies = ?, notify_mentions = ?, notify_email = ?
                             WHERE id = ?
                         ");
                         $stmt->execute([
                             $bio ?: null, $location ?: null, $website ?: null,
-                            $signature ?: null, (int)$notifyReplies, (int)$notifyMentions, $userId
+                            $signature ?: null, (int)$notifyReplies, (int)$notifyMentions, (int)$notifyEmail, $userId
                         ]);
                     }
 
@@ -231,6 +231,10 @@ require_once __DIR__ . '/../includes/header.php';
                 <label class="checkbox-label">
                     <input type="checkbox" name="notify_mentions" value="1" <?= $notifyMentions ? 'checked' : '' ?>>
                     Упоминания @ник и цитаты
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" name="notify_email" value="1" <?= $notifyEmail ? 'checked' : '' ?>>
+                    Дублировать уведомления на email
                 </label>
             </div>
         </div>

@@ -260,7 +260,7 @@ function attachRender(array $rows) {
         $html .= '<div class="attach-images">';
         foreach ($images as $r) {
             $url = ATTACH_URL_BASE . (int)$r['id'];
-            $html .= '<a href="' . $url . '" target="_blank" rel="noopener" class="attach-image-link" title="' . escape($r['orig_name']) . '">'
+            $html .= '<a href="' . $url . '" target="_blank" rel="noopener" class="attach-image-link" title="' . escape($r['orig_name']) . ' · скачиваний: ' . (int)$r['downloads'] . '">'
                    . '<img src="' . $url . '" alt="' . escape($r['orig_name']) . '" class="attach-image" loading="lazy">'
                    . '</a>';
         }
@@ -273,6 +273,7 @@ function attachRender(array $rows) {
                    . '<span class="attach-file-icon">📎</span>'
                    . '<span class="attach-file-name">' . escape($r['orig_name']) . '</span>'
                    . '<span class="attach-file-size">' . attachFormatSize($r['size_bytes']) . '</span>'
+                   . '<span class="attach-file-dl" title="Скачиваний">⬇ ' . (int)$r['downloads'] . '</span>'
                    . '</a>';
         }
         $html .= '</div>';

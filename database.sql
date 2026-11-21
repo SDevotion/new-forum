@@ -273,6 +273,7 @@ CREATE TABLE `users` (
   `signature` varchar(500) DEFAULT NULL,
   `notify_replies` tinyint(1) DEFAULT '1',
   `notify_mentions` tinyint(1) DEFAULT '1',
+  `notify_email` tinyint(1) DEFAULT '0',
   `posts_total` int DEFAULT '0',
   `topics_total` int DEFAULT '0',
   `role` enum('user','moderator','admin') DEFAULT 'user',
@@ -311,6 +312,19 @@ CREATE TABLE `user_sessions` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- --------------------------------------------------------
+CREATE TABLE `password_resets` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `user_id` int NOT NULL,
+  `token_hash` char(64) NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `expires_at` timestamp NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_token` (`token_hash`),
+  KEY `idx_user` (`user_id`),
+  KEY `idx_expires` (`expires_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
 -- Внешние ключи
 ALTER TABLE `attachments`
   ADD CONSTRAINT `attachments_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
@@ -339,6 +353,8 @@ ALTER TABLE `topics`
 ALTER TABLE `topic_subscriptions`
   ADD CONSTRAINT `topic_subscriptions_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
   ADD CONSTRAINT `topic_subscriptions_ibfk_2` FOREIGN KEY (`topic_id`) REFERENCES `topics` (`id`) ON DELETE CASCADE;
+ALTER TABLE `password_resets`
+  ADD CONSTRAINT `password_resets_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 
 -- --------------------------------------------------------
 -- Сид: первый администратор. Пароль: ChangeMe_123! — сменить сразу после входа.

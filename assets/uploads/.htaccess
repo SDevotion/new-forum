@@ -1,9 +1,18 @@
 # Запрет исполнения любых скриптов в каталоге загрузок (Apache 2.4)
+#
+# ВНИМАНИЕ: этот файл защищает ТОЛЬКО Apache с AllowOverride All.
+# На nginx он игнорируется! Для nginx ОБЯЗАТЕЛЬНО добавьте в server {}:
+#
+#   location ^~ /assets/uploads/attachments/ { deny all; return 403; }
+#   location ~* ^/assets/uploads/.*\.(php|phtml|phar|pl|py|cgi|sh)$ { deny all; }
+#
+# либо (лучше) вынесите каталог attachments/ за пределы docroot
+# и настройте ATTACH_DIR в includes/attachments.php.
+
 <FilesMatch "\.(php|phtml|php[0-9]|phar|pl|py|cgi|sh|asp|aspx|jsp|shtml|htaccess)$">
     Require all denied
 </FilesMatch>
 
-# Двойная страховка: снять обработчики PHP, даже если FilesMatch обойдён конфигом хоста
 RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8 .phar
 RemoveType .php .phtml .php3 .php4 .php5 .php7 .php8 .phar
 <IfModule mod_php.c>
@@ -16,17 +25,14 @@ RemoveType .php .phtml .php3 .php4 .php5 .php7 .php8 .phar
     php_flag engine off
 </IfModule>
 
-# Никаких переопределений из вышележащих конфигов и листинга каталога
 Options -ExecCGI -Indexes
 AllowOverride None
 
-# Загруженные файлы не должны интерпретироваться как HTML/SVG
 <IfModule mod_headers.c>
     Header always set X-Content-Type-Options "nosniff"
     Header always set Content-Security-Policy "default-src 'none'; sandbox"
 </IfModule>
 
-# Отдать всё как статику без обработчиков
 SetHandler none
 ForceType application/octet-stream
 <FilesMatch "\.(jpg|jpeg|png|gif|webp)$">
@@ -34,7 +40,7 @@ ForceType application/octet-stream
 </FilesMatch>
 
 # Вложения — только через /attachment.php (ACL). Прямые URL запрещены.
-# Аватары (avatars/) остаются публичной статикой.
+# Правило относительное (per-dir): работает при установке в любой подкаталог.
+# Аватары лежат в avatars/ и под это правило не попадают.
 RewriteEngine On
-RewriteCond %{REQUEST_URI} !^/assets/uploads/avatars/ [NC]
 RewriteRule ^attachments/ - [F,L]

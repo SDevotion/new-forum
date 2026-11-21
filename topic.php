@@ -36,10 +36,11 @@ if (!$topic || ($topic['is_hidden'] && !$isStaff)) {
     exit;
 }
 
-// Счётчик просмотров (не чаще раза за сессию; автор и стафф не считаются).
-// Отметки живут в user_sessions.payload, список ограничен 500 темами (FIFO).
+// Счётчик просмотров: только авторизованные участники (не автор и не стафф),
+// не чаще раза за сессию. Гости/боты не учитываются — метрику нельзя накрутить
+// массовым созданием гостевых сессий. Отметки живут в payload, FIFO-лимит 500.
 $isAuthorView = isLoggedIn() && (int)$_SESSION['user_id'] === (int)$topic['user_id'];
-if (!$isStaff && !$isAuthorView && sessionMarkOnce('viewed_topics', $topicId)) {
+if (isLoggedIn() && !$isStaff && !$isAuthorView && sessionMarkOnce('viewed_topics', $topicId)) {
     $db->prepare("UPDATE topics SET views_count = views_count + 1 WHERE id = ?")->execute([$topicId]);
     $topic['views_count']++;
 }
@@ -85,6 +86,9 @@ $roles = ['user' => 'Участник', 'moderator' => 'Модератор', 'ad
 $forumClosed = setting('forum_closed', false) && !isModerator();
 $canReply = isLoggedIn() && !$topic['is_closed'] && !$topic['is_hidden'] && !$forumClosed;
 $subscribed = isSubscribed($topicId);
+
+// Флаги редактирования: автор не правит скрытое/закрытое, стафф — всегда
+$topicEditFlags = ['is_hidden' => (bool)$topic['is_hidden'], 'topic_closed' => (bool)$topic['is_closed']];
 
 require_once __DIR__ . '/includes/header.php';
 ?>
@@ -175,10 +179,7 @@ require_once __DIR__ . '/includes/header.php';
             <div class="post-author-name"><?= escape($topic['username']) ?></div>
         </a>
         <div class="post-author-role role-<?= escape($topic['role']) ?>">
-            <?php
-            $roles = ['user' => 'Участник', 'moderator' => 'Модератор', 'admin' => 'Администратор'];
-            echo $roles[$topic['role']] ?? 'Участник';
-            ?>
+            <?= $roles[$topic['role']] ?? 'Участник' ?>
         </div>
     </div>
     <div class="post-body">
@@ -193,7 +194,7 @@ require_once __DIR__ . '/includes/header.php';
             </div>
         <?php endif; ?>
 
-        <?php if (canEdit($topic['user_id'], $topic['created_at'])): ?>
+        <?php if (canEdit($topic['user_id'], $topic['created_at'], $topicEditFlags)): ?>
             <div class="post-actions">
                 <a href="/edit/index.php?type=topic&id=<?= $topicId ?>" class="btn-link">Редактировать</a>
             </div>
@@ -223,6 +224,7 @@ require_once __DIR__ . '/includes/header.php';
         <?php
         $number = $offset + $index + 1;
         $isOwner = $currentUser && (int)$post['user_id'] === (int)$currentUser['id'];
+        $postEditFlags = ['is_hidden' => (bool)$post['is_hidden'], 'topic_closed' => (bool)$topic['is_closed']];
         ?>
         <div class="post-card <?= $post['is_hidden'] ? 'post-hidden' : '' ?>" id="post-<?= (int)$post['id'] ?>">
             <div class="post-author">
@@ -257,7 +259,7 @@ require_once __DIR__ . '/includes/header.php';
                 <?php endif; ?>
 
                 <div class="post-actions">
-                    <?php if (canEdit($post['user_id'], $post['created_at'])): ?>
+                    <?php if (canEdit($post['user_id'], $post['created_at'], $postEditFlags)): ?>
                         <a href="/edit/index.php?type=post&id=<?= (int)$post['id'] ?>" class="btn-link">Редактировать</a>
                     <?php endif; ?>
 
@@ -337,7 +339,7 @@ require_once __DIR__ . '/includes/header.php';
 <?php endif; ?>
 
 <?php if (isLoggedIn()): ?>
-<div class="report-modal" id="reportModal">
+<div class="report-modal" id="reportModal" role="dialog" aria-modal="true" aria-labelledby="reportModalTitle">
     <div class="report-modal-card">
         <h3 id="reportModalTitle">Жалоба</h3>
         <form method="POST" action="/posts/report.php" id="reportForm">

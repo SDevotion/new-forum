@@ -9,7 +9,7 @@ if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
 }
 
 $db = Database::getInstance()->getConnection();
-$uid = (int)$_SESSION['user_id'];
+$uid = currentUserId();
 $topicId = (int)($_POST['topic_id'] ?? 0);
 $back = '/topic.php?id=' . $topicId;
 

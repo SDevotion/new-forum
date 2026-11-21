@@ -10,7 +10,7 @@ if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
 }
 
 $db = Database::getInstance()->getConnection();
-$uid = (int)$_SESSION['user_id'];
+$uid = currentUserId();
 $action = $_POST['action'] ?? '';
 $back = $_POST['back'] ?? '/notifications.php';
 if (!preg_match('~^/[A-Za-z0-9_./?=&#%-]*$~', $back)) $back = '/notifications.php';

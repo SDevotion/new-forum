@@ -303,6 +303,7 @@ CREATE TABLE `user_sessions` (
   `user_agent` text,
   `payload` mediumtext,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_ts` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `expires_at` timestamp NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `session_token` (`session_token`),

@@ -12,35 +12,35 @@ $online = getOnlineList();
 $period = $_GET['period'] ?? 'all';
 if (!in_array($period, ['all', 'month', 'week'], true)) $period = 'all';
 
-$dateCond = '';
-if ($period === 'month') $dateCond = " AND p.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
-if ($period === 'week')  $dateCond = " AND p.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+$dateCondP = '';
+$dateCondT = '';
+if ($period === 'month') { $dateCondP = " AND p.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)"; $dateCondT = " AND t.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)"; }
+if ($period === 'week')  { $dateCondP = " AND p.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)";  $dateCondT = " AND t.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)"; }
 
-// Топ по сообщениям
-if ($period === 'all') {
-    $topPosters = $db->query("
-        SELECT id, username, avatar, role, posts_total AS cnt
-        FROM users WHERE is_active = 1 AND posts_total > 0
-        ORDER BY posts_total DESC, id ASC LIMIT 10
-    ")->fetchAll();
-} else {
-    $topPosters = $db->query("
-        SELECT u.id, u.username, u.avatar, u.role, COUNT(p.id) AS cnt
-        FROM posts p
-        JOIN users u ON u.id = p.user_id
-        WHERE u.is_active = 1 AND p.is_hidden = 0 $dateCond
-        GROUP BY u.id, u.username, u.avatar, u.role
-        ORDER BY cnt DESC, u.id ASC LIMIT 10
-    ")->fetchAll();
-}
+// Топ по сообщениям: единая методика для всех периодов —
+// только видимые посты в активных разделах (без дрейфующего posts_total).
+$topPosters = $db->query("
+    SELECT u.id, u.username, u.avatar, u.role, COUNT(p.id) AS cnt
+    FROM posts p
+    JOIN users u ON u.id = p.user_id
+    JOIN topics t ON t.id = p.topic_id
+    JOIN forums f ON f.id = t.forum_id
+    JOIN categories c ON c.id = f.category_id
+    WHERE u.is_active = 1 AND p.is_hidden = 0 AND t.is_hidden = 0
+      AND f.is_active = 1 AND c.is_active = 1 $dateCondP
+    GROUP BY u.id, u.username, u.avatar, u.role
+    ORDER BY cnt DESC, u.id ASC LIMIT 10
+")->fetchAll();
 
 // Топ по темам
-$topicCond = str_replace('p.created_at', 't.created_at', $dateCond);
 $topAuthors = $db->query("
     SELECT u.id, u.username, u.avatar, u.role, COUNT(t.id) AS cnt
     FROM topics t
     JOIN users u ON u.id = t.user_id
-    WHERE u.is_active = 1 AND t.is_hidden = 0 $topicCond
+    JOIN forums f ON f.id = t.forum_id
+    JOIN categories c ON c.id = f.category_id
+    WHERE u.is_active = 1 AND t.is_hidden = 0
+      AND f.is_active = 1 AND c.is_active = 1 $dateCondT
     GROUP BY u.id, u.username, u.avatar, u.role
     ORDER BY cnt DESC, u.id ASC LIMIT 10
 ")->fetchAll();
@@ -80,13 +80,16 @@ for ($i = 13; $i >= 0; $i--) {
 $maxVal = 1;
 foreach ($series as $s) $maxVal = max($maxVal, $s['posts'], $s['topics'], $s['users']);
 
-// Активные разделы
+// Активные разделы: фактические видимые счётчики, а не сырой posts_count
 $topForums = $db->query("
-    SELECT f.id, f.title, f.icon, f.posts_count
+    SELECT f.id, f.title, f.icon,
+           (SELECT COUNT(*) FROM topics t WHERE t.forum_id = f.id AND t.is_hidden = 0)
+         + (SELECT COUNT(*) FROM posts p JOIN topics t ON t.id = p.topic_id
+            WHERE t.forum_id = f.id AND t.is_hidden = 0 AND p.is_hidden = 0) AS visible_posts
     FROM forums f
     JOIN categories c ON c.id = f.category_id
     WHERE f.is_active = 1 AND c.is_active = 1
-    ORDER BY f.posts_count DESC, f.id ASC LIMIT 8
+    ORDER BY visible_posts DESC, f.id ASC LIMIT 8
 ")->fetchAll();
 
 require_once __DIR__ . '/includes/header.php';
@@ -193,7 +196,7 @@ require_once __DIR__ . '/includes/header.php';
 <div class="forum-bars">
     <?php
     $maxPosts = 1;
-    foreach ($topForums as $f) $maxPosts = max($maxPosts, (int)$f['posts_count']);
+    foreach ($topForums as $f) $maxPosts = max($maxPosts, (int)$f['visible_posts']);
     ?>
     <?php if (empty($topForums)): ?>
         <p class="rating-empty">Разделов пока нет</p>
@@ -201,8 +204,8 @@ require_once __DIR__ . '/includes/header.php';
     <?php foreach ($topForums as $f): ?>
         <a href="/section.php?id=<?= (int)$f['id'] ?>" class="forum-bar-row">
             <span class="forum-bar-name"><?= escape($f['icon'] . ' ' . $f['title']) ?></span>
-            <span class="forum-bar-track"><span class="forum-bar-fill" style="width:<?= round($f['posts_count'] / $maxPosts * 100) ?>%"></span></span>
-            <span class="forum-bar-value"><?= (int)$f['posts_count'] ?></span>
+            <span class="forum-bar-track"><span class="forum-bar-fill" style="width:<?= round($f['visible_posts'] / $maxPosts * 100) ?>%"></span></span>
+            <span class="forum-bar-value"><?= (int)$f['visible_posts'] ?></span>
         </a>
     <?php endforeach; ?>
 </div>

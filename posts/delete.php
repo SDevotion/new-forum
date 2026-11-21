@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/permissions.php';
 require_once __DIR__ . '/../includes/attachments.php';
+require_once __DIR__ . '/../includes/counters.php';
 
 $topicId = (int)($_POST['topic_id'] ?? 0);
 $postId = (int)($_POST['post_id'] ?? 0);
@@ -20,7 +21,11 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !verifyCSRFToken($_POST['csrf_token
 $db = Database::getInstance()->getConnection();
 $currentUser = getCurrentUser();
 
-$stmt = $db->prepare("SELECT id, user_id FROM posts WHERE id = ? AND topic_id = ?");
+$stmt = $db->prepare("
+    SELECT p.id, p.user_id, t.forum_id
+    FROM posts p JOIN topics t ON t.id = p.topic_id
+    WHERE p.id = ? AND p.topic_id = ?
+");
 $stmt->execute([$postId, $topicId]);
 $post = $stmt->fetch();
 
@@ -45,15 +50,18 @@ try {
     $db->prepare("DELETE FROM reports WHERE target_type = 'post' AND target_id = ?")->execute([$postId]);
     $db->prepare("DELETE FROM posts WHERE id = ?")->execute([$postId]);
     $db->commit();
-    // файлы с диска — только после успешного commit
     foreach ($attachRows as $ar) attachUnlink($ar['stored_name']);
 
-    // Аудит: удаление ЧУЖОГО сообщения модератором — мод-действие.
+    // Явный пересчёт (DELETE-триггеров больше нет).
+    recountTopic($topicId);
+    recountForum((int)$post['forum_id']);
+    recountUsers([(int)$post['user_id']]);
+
     if (!$isOwner) {
         logModeration('post_delete', 'post', $postId, 'автор #' . (int)$post['user_id']);
     }
 
-    unset($_SESSION['last_post_hash'][$topicId]); // антидубль снят: пост удалён осознанно
+    unset($_SESSION['last_post_hash'][$topicId]);
     setFlashMessage('success', 'Сообщение удалено');
 } catch (PDOException $e) {
     if ($db->inTransaction()) $db->rollBack();

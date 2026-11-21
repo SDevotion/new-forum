@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/editing.php';
+require_once __DIR__ . '/../includes/visibility.php';
 requireModerator();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') redirect('/index.php');
@@ -18,6 +19,10 @@ if (!$rev) { setFlashMessage('error', 'Версия не найдена'); redir
 $type = $rev['target_type'];
 $id = (int)$rev['target_id'];
 $backUrl = '/index.php';
+
+// Объект должен существовать в активном разделе (скрытое модератору видно).
+$exists = $type === 'topic' ? topicVisible($id) : postVisible($id);
+if (!$exists) { setFlashMessage('error', 'Объект больше недоступен'); redirect('/index.php'); }
 
 try {
     if ($type === 'topic') {

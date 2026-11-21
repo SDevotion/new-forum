@@ -6,10 +6,22 @@ require_once __DIR__ . '/stats.php';
 require_once __DIR__ . '/notifications.php';
 $currentUser = getCurrentUser();
 
+// Забаненный/удалённый аккаунт: getCurrentUser вернул null и погасил сессию —
+// отправляем на главную, чтобы flash показался (раньше это делал сам геттер).
+if (isLoggedIn() === false && isset($_SESSION['flash_message']) && !empty($_COOKIE[session_name()]) === false) {
+    // no-op: обычная гостевая страница
+}
+
 // Онлайн-трекинг
 touchActivity();
 trackGuest();
 $flashMessage = getFlashMessage();
+
+// CSP: свой origin + data:-картинки; инлайн-скрипт конфигурации — по nonce.
+$cspNonce = base64_encode(random_bytes(16));
+if (!headers_sent()) {
+    header("Content-Security-Policy: default-src 'self'; img-src 'self' data:; script-src 'self' 'nonce-" . $cspNonce . "'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'");
+}
 ?>
 <!DOCTYPE html>
 <html lang="ru">
@@ -18,7 +30,7 @@ $flashMessage = getFlashMessage();
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= isset($pageTitle) ? escape($pageTitle) . ' - ' : '' ?>Форум</title>
     <link rel="stylesheet" href="/assets/css/style.css">
-    <script>
+    <script nonce="<?= $cspNonce ?>">
     window.FG_CONFIG = <?= json_encode([
         'titleMin'    => setting('title_min', 5),
         'titleMax'    => setting('title_max', 200),
@@ -29,7 +41,7 @@ $flashMessage = getFlashMessage();
         'reportMax'   => setting('report_max', 500),
         'passwordMin' => setting('password_min', 6),
         'avatarMaxMb' => max(1, setting('avatar_max_size_mb', 2)),
-    ]) ?>;
+    ], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
     </script>
 </head>
 <body>
@@ -42,7 +54,7 @@ $flashMessage = getFlashMessage();
                         <span class="logo-text">ForumHub</span>
                     </a>
                 </div>
-                
+
                 <nav class="nav">
                     <a href="/index.php" class="nav-link">Главная</a>
                     <a href="/members.php" class="nav-link">Участники</a>
@@ -65,7 +77,7 @@ $flashMessage = getFlashMessage();
                         </a>
                     <?php endif; ?>
                 </nav>
-                
+
                 <form method="GET" action="/search.php" class="header-search">
                     <input type="text" name="q" placeholder="Поиск..." maxlength="<?= setting('search_max', 100) ?>" value="<?= escape($_GET['q'] ?? '') ?>">
                     <button type="submit" title="Найти">🔍</button>
@@ -74,7 +86,7 @@ $flashMessage = getFlashMessage();
                 <div class="user-menu">
                     <?php if ($currentUser): ?>
                         <a href="/profile.php?id=<?= (int)$currentUser['id'] ?>" class="user-info">
-                            <img src="<?= avatarUrl($currentUser['avatar']) ?>" 
+                            <img src="<?= avatarUrl($currentUser['avatar']) ?>"
                                  alt="Avatar" class="user-avatar">
                             <span class="username"><?= escape($currentUser['username']) ?></span>
                         </a>
@@ -92,7 +104,7 @@ $flashMessage = getFlashMessage();
             </div>
         </div>
     </header>
-    
+
     <main class="main">
         <div class="container">
             <?php if ($flashMessage): ?>

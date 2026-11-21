@@ -99,7 +99,7 @@ try {
 
     try {
         attachStore($attachFiles, 'post', $postId, (int)$currentUser['id']);
-    } catch (RuntimeException $e) {
+    } catch (Throwable $e) {
         error_log('Attach store error: ' . $e->getMessage());
         setFlashMessage('info', 'Ответ опубликован, но часть вложений не удалось сохранить');
     }

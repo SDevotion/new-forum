@@ -15,18 +15,37 @@ $counts = [
 $newUsers7 = (int)$db->query("SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL 7 DAY")->fetchColumn();
 $banned = (int)$db->query("SELECT COUNT(*) FROM users WHERE is_active = 0")->fetchColumn();
 
-// Размер каталога загрузок (рекурсивно: attachments/, avatars/)
+// Размер загрузок: кэш APCu 5 мин (рекурсивный скан дорогой на больших каталогах).
+// Без APCu — скан, но не чаще раза в 5 минут через файл-метку.
 $uploadDir = __DIR__ . '/../assets/uploads';
 $uploadSize = 0; $uploadFiles = 0;
-if (is_dir($uploadDir)) {
-    $it = new RecursiveIteratorIterator(
-        new RecursiveDirectoryIterator($uploadDir, FilesystemIterator::SKIP_DOTS),
-        RecursiveIteratorIterator::LEAVES_ONLY
-    );
-    foreach ($it as $fp) {
-        if ($fp->isFile() && $fp->getFilename() !== '.htaccess') {
-            $uploadSize += $fp->getSize();
-            $uploadFiles++;
+$cacheKey = 'forum_upload_stats';
+$gotCache = false;
+if (function_exists('apcu_fetch') && (!function_exists('apcu_enabled') || apcu_enabled())) {
+    $hit = apcu_fetch($cacheKey, $ok);
+    if ($ok && is_array($hit)) { [$uploadFiles, $uploadSize] = $hit; $gotCache = true; }
+}
+if (!$gotCache) {
+    $marker = $uploadDir . '/.stats_cache';
+    $fresh = is_file($marker) && (time() - filemtime($marker)) < 300;
+    if ($fresh) {
+        $data = @json_decode((string)@file_get_contents($marker), true);
+        if (is_array($data)) { $uploadFiles = (int)$data[0]; $uploadSize = (int)$data[1]; $gotCache = true; }
+    }
+    if (!$gotCache && is_dir($uploadDir)) {
+        $it = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($uploadDir, FilesystemIterator::SKIP_DOTS),
+            RecursiveIteratorIterator::LEAVES_ONLY
+        );
+        foreach ($it as $fp) {
+            if ($fp->isFile() && !in_array($fp->getFilename(), ['.htaccess', '.stats_cache'], true)) {
+                $uploadSize += $fp->getSize();
+                $uploadFiles++;
+            }
+        }
+        @file_put_contents($marker, json_encode([$uploadFiles, $uploadSize]));
+        if (function_exists('apcu_store') && (!function_exists('apcu_enabled') || apcu_enabled())) {
+            apcu_store($cacheKey, [$uploadFiles, $uploadSize], 300);
         }
     }
 }

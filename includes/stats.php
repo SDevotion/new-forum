@@ -7,16 +7,13 @@ require_once __DIR__ . '/functions.php';
 if (!defined('ONLINE_WINDOW')) define('ONLINE_WINDOW', max(60, setting('online_window', 900)));
 
 /**
- * Отметка активности авторизованного пользователя.
- * Пишем в БД не чаще раза в минуту, чтобы не грузить базу.
+ * Отметка активности авторизованного пользователя (не чаще раза в минуту).
  */
 function touchActivity() {
     if (!isLoggedIn()) return;
 
     $id = (int)$_SESSION['user_id'];
     $now = time();
-    // Троттлинг: не чаще раза в 60 сек, метка ставится ДО проверки записи,
-    // чтобы серия быстрых запросов не писала в users на каждый клик
     if (isset($_SESSION['activity_ts']) && ($now - (int)$_SESSION['activity_ts']) < 60) return;
     $_SESSION['activity_ts'] = $now;
 
@@ -29,14 +26,16 @@ function touchActivity() {
 }
 
 /**
- * Отметка активности гостя: строка user_sessions (user_id = 0).
- * created_at фиксирует первый визит, «свежесть» даёт expires_at,
- * который обработчик продлевает на каждом запросе (скользящее окно).
- * Чтобы гости учитывались в ONLINE_WINDOW, отдельно трогаем updated-метку.
+ * Отметка активности гостя. Троттлинг 60 сек: без него каждая страница гостя
+ * (включая ботов) форсировала запись payload сессии в БД.
+ * «Свежесть» для подсчёта онлайн даёт expires_at, который write() продлевает
+ * при любой записи сессии; точность окна ONLINE_WINDOW (>= 60 сек) сохраняется.
  */
 function trackGuest() {
     if (isLoggedIn()) return;
-    $_SESSION['guest_seen'] = time(); // маркер для payload; свежесть — в expires_at
+    $now = time();
+    if (isset($_SESSION['guest_seen']) && ($now - (int)$_SESSION['guest_seen']) < 60) return;
+    $_SESSION['guest_seen'] = $now;
 }
 
 /**
@@ -54,10 +53,6 @@ function getOnlineList() {
         LIMIT 100
     ")->fetchAll();
 
-    // Гости — строки user_sessions с user_id = 0, «тронутые» в пределах окна.
-    // Обработчик на каждом запросе продлевает expires_at на SESSION_LIFETIME,
-    // поэтому момент последнего визита = expires_at - SESSION_LIFETIME.
-    // Кэш на запрос.
     static $guestCount = null;
     if ($guestCount === null) {
         try {
@@ -68,8 +63,6 @@ function getOnlineList() {
                   AND expires_at <= NOW() + INTERVAL ? SECOND
                   AND expires_at >= NOW() + INTERVAL ? SECOND
             ");
-            // последний визит в пределах ONLINE_WINDOW:
-            // (expires_at - SESSION_LIFETIME) >= NOW() - ONLINE_WINDOW
             $stmt->execute([
                 SESSION_LIFETIME,
                 SESSION_LIFETIME - $w,
@@ -80,9 +73,8 @@ function getOnlineList() {
             $guestCount = 0;
         }
     }
-    $guests = $guestCount;
 
-    return ['users' => $users, 'count' => count($users), 'guests' => $guests];
+    return ['users' => $users, 'count' => count($users), 'guests' => $guestCount];
 }
 
 /**

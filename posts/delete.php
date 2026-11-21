@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/functions.php';
+require_once __DIR__ . '/../includes/permissions.php';
 require_once __DIR__ . '/../includes/attachments.php';
 
 $topicId = (int)($_POST['topic_id'] ?? 0);
@@ -9,6 +10,7 @@ $backUrl = '/topic.php?id=' . $topicId;
 if (!isLoggedIn()) {
     redirect('/auth/login.php');
 }
+enforceActiveUser();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !verifyCSRFToken($_POST['csrf_token'] ?? '')) {
     setFlashMessage('error', 'Недействительный запрос');
@@ -45,6 +47,12 @@ try {
     $db->commit();
     // файлы с диска — только после успешного commit
     foreach ($attachRows as $ar) attachUnlink($ar['stored_name']);
+
+    // Аудит: удаление ЧУЖОГО сообщения модератором — мод-действие.
+    if (!$isOwner) {
+        logModeration('post_delete', 'post', $postId, 'автор #' . (int)$post['user_id']);
+    }
+
     unset($_SESSION['last_post_hash'][$topicId]); // антидубль снят: пост удалён осознанно
     setFlashMessage('success', 'Сообщение удалено');
 } catch (PDOException $e) {

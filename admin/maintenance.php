@@ -7,6 +7,10 @@ require_once __DIR__ . '/../includes/attachments.php';
 $pageTitle = 'Обслуживание';
 $db = Database::getInstance()->getConnection();
 
+// Grace-период очистки сирот: файлы моложе часа не трогаем —
+// между move_uploaded_file и INSERT/UPDATE есть окно, когда файл ещё «сирота».
+define('ORPHAN_GRACE_SECONDS', 3600);
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
         setFlashMessage('error', 'Недействительный запрос');
@@ -91,34 +95,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             break;
 
         case 'orphan_attachments':
-            // Файлы на диске без записи в attachments
+            // Файлы на диске без записи в attachments (старше grace-периода)
             $known = $db->query("SELECT stored_name FROM attachments")->fetchAll(PDO::FETCH_COLUMN);
             $known = array_flip($known);
-            $removed = 0; $bytes = 0;
+            $removed = 0; $bytes = 0; $skipped = 0;
             foreach (@scandir(ATTACH_DIR) ?: [] as $fn) {
                 if ($fn === '.' || $fn === '..' || isset($known[$fn])) continue;
                 $fp = ATTACH_DIR . '/' . $fn;
-                if (is_file($fp)) { $bytes += filesize($fp); if (@unlink($fp)) $removed++; }
+                if (!is_file($fp)) continue;
+                if (time() - filemtime($fp) < ORPHAN_GRACE_SECONDS) { $skipped++; continue; }
+                $bytes += filesize($fp);
+                if (@unlink($fp)) $removed++;
             }
             logModeration('maint_clean', 'forum', 0, "Вложения без записей: удалено файлов — $removed");
-            setFlashMessage('success', "Удалено осиротевших вложений: $removed (" . round($bytes / 1048576, 1) . " МБ)");
+            setFlashMessage('success', "Удалено осиротевших вложений: $removed (" . round($bytes / 1048576, 1) . " МБ)" . ($skipped ? ", пропущено свежих: $skipped" : ''));
             break;
 
         case 'orphan_avatars':
-            // Файлы аватаров, на которые никто не ссылается
+            // Файлы аватаров, на которые никто не ссылается (старше grace-периода)
             $dir = __DIR__ . '/../assets/uploads/avatars';
             $known = [];
             foreach ($db->query("SELECT avatar FROM users WHERE avatar IS NOT NULL")->fetchAll(PDO::FETCH_COLUMN) as $path) {
                 $known[basename($path)] = true;
             }
-            $removed = 0; $bytes = 0;
+            $removed = 0; $bytes = 0; $skipped = 0;
             foreach (@scandir($dir) ?: [] as $fn) {
                 if ($fn === '.' || $fn === '..' || isset($known[$fn])) continue;
+                if (strpos($fn, 'tmp_') === 0 && time() - filemtime($dir . '/' . $fn) < ORPHAN_GRACE_SECONDS) { $skipped++; continue; }
                 $fp = $dir . '/' . $fn;
-                if (is_file($fp)) { $bytes += filesize($fp); if (@unlink($fp)) $removed++; }
+                if (!is_file($fp)) continue;
+                if (time() - filemtime($fp) < ORPHAN_GRACE_SECONDS) { $skipped++; continue; }
+                $bytes += filesize($fp);
+                if (@unlink($fp)) $removed++;
             }
             logModeration('maint_clean', 'forum', 0, "Аватары без ссылок: удалено файлов — $removed");
-            setFlashMessage('success', "Удалено неиспользуемых аватаров: $removed (" . round($bytes / 1048576, 1) . " МБ)");
+            setFlashMessage('success', "Удалено неиспользуемых аватаров: $removed (" . round($bytes / 1048576, 1) . " МБ)" . ($skipped ? ", пропущено свежих: $skipped" : ''));
             break;
 
         default:
@@ -227,7 +238,7 @@ adminOpen('maintenance');
     </div>
     <div class="admin-card">
         <h3>Осиротевшие файлы</h3>
-        <p class="admin-muted">Файлы на диске, на которые нет ссылок в БД (после сбоев загрузки или ручных удалений).</p>
+        <p class="admin-muted">Файлы на диске, на которые нет ссылок в БД (после сбоев загрузки или ручных удалений). Файлы моложе 1 часа не удаляются — защита от гонок с текущими загрузками.</p>
         <form method="POST" class="inline-form js-confirm-maint">
             <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
             <input type="hidden" name="op" value="orphan_attachments">
@@ -287,12 +298,6 @@ adminOpen('maintenance');
         ?>
     <?php endif; ?>
 </div>
-
-<script>
-document.querySelectorAll('.js-confirm-maint').forEach(f => f.addEventListener('submit', e => {
-    if (!confirm('Удалить файлы безвозвратно?')) e.preventDefault();
-}));
-</script>
 
 <?php
 adminClose();

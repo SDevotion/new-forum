@@ -50,6 +50,8 @@ function settingsDefaults() {
             'rl_reply_window'   => ['int', 300,  'limits'],
             'rl_report_max'     => ['int', 5,    'limits'],
             'rl_report_window'  => ['int', 3600, 'limits'],
+            'rl_edit_max'       => ['int', 20,   'limits'],
+            'rl_edit_window'    => ['int', 600,  'limits'],
             'online_window'     => ['int', 900,  'limits'],
         ];
     }

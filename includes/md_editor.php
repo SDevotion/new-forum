@@ -5,7 +5,7 @@
 $mdRows = $mdRows ?? 8;
 $mdRequired = !empty($mdRequired) ? 'required' : '';
 ?>
-<div class="md-editor">
+<div class="md-editor" data-csrf="<?= escape(generateCSRFToken()) ?>">
     <div class="md-toolbar">
         <button type="button" class="md-btn" data-action="bold" title="Жирный (Ctrl+B)"><b>B</b></button>
         <button type="button" class="md-btn" data-action="italic" title="Курсив (Ctrl+I)"><i>I</i></button>

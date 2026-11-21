@@ -33,6 +33,7 @@ $ranges = [
     'rl_report_max' => [1, 100],   'rl_report_window' => [60, 86400],
     'rl_edit_max' => [1, 200],     'rl_edit_window' => [60, 86400],
     'online_window' => [60, 7200],
+    'rl_forgot_max' => [1, 20], 'rl_forgot_window' => [60, 86400],
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -50,6 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'registration_enabled' => isset($_POST['registration_enabled']),
             'forum_closed'         => isset($_POST['forum_closed']),
             'forum_closed_message' => $msg,
+            'email_notifications'  => isset($_POST['email_notifications']),
         ];
     } else {
         if ($tab === 'uploads') {
@@ -124,6 +126,8 @@ $labels = [
     'rl_edit_max' => ['Правки сообщений: штук', 'за окно (по участнику, антифлуд ревизиями)'],
     'rl_edit_window' => ['Правки сообщений: окно', 'секунд'],
     'online_window' => ['Окно «онлайн»', 'секунд (участники и гости)'],
+    'rl_forgot_max' => ['Восстановление пароля: запросов', 'за окно (по IP)'],
+    'rl_forgot_window' => ['Восстановление пароля: окно', 'секунд'],
 ];
 
 require_once __DIR__ . '/../includes/header.php';
@@ -151,6 +155,10 @@ adminOpen('general');
             <label class="admin-check">
                 <input type="checkbox" name="forum_closed" value="1" <?= setting('forum_closed', false) ? 'checked' : '' ?>>
                 <span>Закрыть форум (чтение для всех, новые темы и ответы — только модерация)</span>
+            </label>
+            <label class="admin-check">
+                <input type="checkbox" name="email_notifications" value="1" <?= setting('email_notifications', false) ? 'checked' : '' ?>>
+                <span>Email-уведомления об ответах и упоминаниях (требуется настроенная почта в config)</span>
             </label>
             <div class="form-group">
                 <label for="closedMsg">Сообщение о закрытии</label>

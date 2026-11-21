@@ -1,20 +1,38 @@
 <?php
 // includes/session.php — хранение сессий в БД (таблица user_sessions).
-// Для авторизованных: строка user_sessions (user_id > 0).
-// Для гостей: строка-«якорь» (user_id = 0) — нужна для онлайн-трекинга гостей.
-// $_SESSION остаётся рабочим API, но живёт в БД, а не в файлах.
-// Совместимо с PHP 7.x и 8.x: без union-типов и без атрибутов.
+// Блокировка на время запроса (GET_LOCK) — как у файлового обработчика PHP:
+// параллельные запросы одной сессии сериализуются, потерянных обновлений нет.
 
 require_once __DIR__ . '/../config/database.php';
 
 if (!defined('SESSION_NAME'))     define('SESSION_NAME', 'FORUMSESSID');
-if (!defined('SESSION_LIFETIME')) define('SESSION_LIFETIME', 30 * 86400); // скользящее окно, сек.
+if (!defined('SESSION_LIFETIME')) define('SESSION_LIFETIME', 30 * 86400);
 
 class DbSessionHandler implements SessionHandlerInterface {
     private $db;
+    private $lockName = null;
 
     public function __construct() {
         $this->db = Database::getInstance()->getConnection();
+    }
+
+    private function acquireLock($id) {
+        $this->lockName = 'sess:' . md5($id);
+        $st = $this->db->prepare("SELECT GET_LOCK(?, 10)");
+        $st->execute([$this->lockName]);
+        if ((int)$st->fetchColumn() !== 1) {
+            $this->lockName = null;
+            return false;
+        }
+        return true;
+    }
+
+    private function releaseLock() {
+        if ($this->lockName !== null) {
+            $st = $this->db->prepare("SELECT RELEASE_LOCK(?)");
+            $st->execute([$this->lockName]);
+            $this->lockName = null;
+        }
     }
 
     public function open($savePath, $sessionName) {
@@ -22,24 +40,22 @@ class DbSessionHandler implements SessionHandlerInterface {
     }
 
     public function close() {
+        $this->releaseLock();
         return true;
     }
 
     public function read($id) {
         try {
+            if (!$this->acquireLock($id)) {
+                error_log('Session lock timeout: ' . $id);
+                return ''; // деградируем в пустую сессию вместо гонки
+            }
             $stmt = $this->db->prepare(
                 "SELECT payload FROM user_sessions WHERE session_token = ? AND expires_at > NOW()"
             );
             $stmt->execute([$id]);
             $payload = $stmt->fetchColumn();
-            if ($payload === false) {
-                return '';
-            }
-            // Скользящее продление жизни сессии
-            $this->db->prepare(
-                "UPDATE user_sessions SET expires_at = NOW() + INTERVAL ? SECOND WHERE session_token = ?"
-            )->execute([SESSION_LIFETIME, $id]);
-            return (string)$payload;
+            return $payload === false ? '' : (string)$payload;
         } catch (PDOException $e) {
             error_log('Session read error: ' . $e->getMessage());
             return '';
@@ -59,15 +75,18 @@ class DbSessionHandler implements SessionHandlerInterface {
                     payload = VALUES(payload),
                     expires_at = VALUES(expires_at)
             ");
-            return $stmt->execute([
+            $ok = $stmt->execute([
                 $uid, $id,
                 isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : null,
                 mb_substr(isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '', 0, 1000),
                 $data,
                 SESSION_LIFETIME,
             ]);
+            $this->releaseLock();
+            return $ok;
         } catch (PDOException $e) {
             error_log('Session write error: ' . $e->getMessage());
+            $this->releaseLock();
             return false;
         }
     }
@@ -75,9 +94,11 @@ class DbSessionHandler implements SessionHandlerInterface {
     public function destroy($id) {
         try {
             $this->db->prepare("DELETE FROM user_sessions WHERE session_token = ?")->execute([$id]);
+            $this->releaseLock();
             return true;
         } catch (PDOException $e) {
             error_log('Session destroy error: ' . $e->getMessage());
+            $this->releaseLock();
             return false;
         }
     }
@@ -99,12 +120,15 @@ function sessionBoot() {
     if (session_status() !== PHP_SESSION_NONE) {
         return;
     }
+    $secure = (defined('FORCE_SECURE_COOKIES') && FORCE_SECURE_COOKIES)
+        || (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+
     session_name(SESSION_NAME);
     session_set_cookie_params([
         'lifetime' => 0,
         'path'     => '/',
         'domain'   => '',
-        'secure'   => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+        'secure'   => $secure,
         'httponly' => true,
         'samesite' => 'Lax',
     ]);
@@ -112,8 +136,6 @@ function sessionBoot() {
     session_set_save_handler($handler, true);
     session_start();
 
-    // Вероятностный gc самого PHP ненадёжен (на части систем отключён вовсе),
-    // поэтому чистим протухшие строки явно: ~1 запрос из 100
     if (random_int(1, 100) === 1) {
         $handler->gc(SESSION_LIFETIME);
     }

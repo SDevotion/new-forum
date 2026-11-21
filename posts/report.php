@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/permissions.php';
 require_once __DIR__ . '/../includes/ratelimit.php';
 
 if (!isLoggedIn()) { setFlashMessage('error', 'Необходимо войти'); redirect('/auth/login.php'); }
+enforceActiveUser();
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') redirect('/index.php');
 if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) { setFlashMessage('error', 'Недействительный запрос'); redirect('/index.php'); }
 

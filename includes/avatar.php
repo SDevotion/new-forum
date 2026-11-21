@@ -10,6 +10,46 @@ function avatarUrl($path) {
 }
 
 /**
+ * Перекодирование изображения через GD: убирает EXIF/GPS и любые
+ * не-пиксельные данные. Возвращает путь к очищенному файлу или null.
+ */
+function avatarReencode($srcPath, $mime, $dstPath) {
+    if (!function_exists('imagecreatefromstring')) {
+        error_log('avatarReencode: GD недоступен, EXIF не вычищается');
+        return null;
+    }
+    $data = @file_get_contents($srcPath);
+    if ($data === false) return null;
+    $img = @imagecreatefromstring($data);
+    if ($img === false) return null;
+
+    // Поворот по EXIF Orientation ДО его удаления (JPEG с телефонов)
+    if ($mime === 'image/jpeg' && function_exists('exif_read_data')) {
+        $exif = @exif_read_data($srcPath);
+        if (!empty($exif['Orientation'])) {
+            switch ((int)$exif['Orientation']) {
+                case 3: $img = imagerotate($img, 180, 0); break;
+                case 6: $img = imagerotate($img, -90, 0); break;
+                case 8: $img = imagerotate($img, 90, 0); break;
+            }
+        }
+    }
+
+    imagesavealpha($img, true);
+    imagealphablending($img, false);
+
+    $ok = false;
+    switch ($mime) {
+        case 'image/jpeg': $ok = imagejpeg($img, $dstPath, 88); break;
+        case 'image/png':  $ok = imagepng($img, $dstPath, 8); break;
+        case 'image/gif':  $ok = imagegif($img, $dstPath); break;
+        case 'image/webp': $ok = function_exists('imagewebp') ? imagewebp($img, $dstPath, 88) : imagepng($img, $dstPath, 8); break;
+    }
+    imagedestroy($img);
+    return $ok ? $dstPath : null;
+}
+
+/**
  * Обработка загрузки аватара
  * @return array [success(bool), message(string), path(?string)]
  */
@@ -46,8 +86,13 @@ function handleAvatarUpload($file, $userId) {
         return [false, 'Допустимы только JPG, PNG, GIF, WEBP', null];
     }
 
-    if (@getimagesize($file['tmp_name']) === false) {
+    $info = @getimagesize($file['tmp_name']);
+    if ($info === false) {
         return [false, 'Файл не является изображением', null];
+    }
+    // Защита от декомпрессионных бомб: не более 5000x5000 и 25 Мпикс
+    if ($info[0] > 5000 || $info[1] > 5000 || ($info[0] * $info[1]) > 25000000) {
+        return [false, 'Слишком большое разрешение (максимум 5000×5000)', null];
     }
 
     $dir = __DIR__ . '/../assets/uploads/avatars';
@@ -55,11 +100,26 @@ function handleAvatarUpload($file, $userId) {
         return [false, 'Не удалось создать папку для загрузок', null];
     }
 
-    $name = 'u' . (int)$userId . '_' . bin2hex(random_bytes(8)) . '.' . $allowed[$mime];
+    $ext = $allowed[$mime];
+    $name = 'u' . (int)$userId . '_' . bin2hex(random_bytes(8)) . '.' . $ext;
     $target = $dir . '/' . $name;
 
-    if (!move_uploaded_file($file['tmp_name'], $target)) {
-        return [false, 'Не удалось сохранить файл', null];
+    // Сначала перекодируем во временный файл (чистые пиксели, без EXIF),
+    // затем перемещаем. Если GD нет — fallback на исходный файл.
+    $tmpClean = $dir . '/tmp_' . bin2hex(random_bytes(8));
+    $clean = avatarReencode($file['tmp_name'], $mime, $tmpClean);
+
+    if ($clean !== null) {
+        if (!rename($tmpClean, $target)) {
+            @unlink($tmpClean);
+            return [false, 'Не удалось сохранить файл', null];
+        }
+        @unlink($file['tmp_name']);
+    } else {
+        @unlink($tmpClean);
+        if (!move_uploaded_file($file['tmp_name'], $target)) {
+            return [false, 'Не удалось сохранить файл', null];
+        }
     }
 
     return [true, '', '/assets/uploads/avatars/' . $name];

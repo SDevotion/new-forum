@@ -37,22 +37,38 @@ function ftQuery($q) {
 }
 
 /**
- * Подсветка найденных слов в уже экранированном тексте
+ * Подсветка найденных слов. Принимает СЫРОЙ текст и сама экранирует вывод:
+ * подсветка по уже экранированному HTML ломала сущности (&amp; -> &<mark>amp</mark>;).
+ * Возвращает безопасный HTML с <mark class="search-mark">.
  */
-function highlightWords($escapedHtml, $q) {
+function highlightWords($rawText, $q) {
+    $rawText = (string)$rawText;
+
     $words = [];
     foreach (preg_split('/\s+/u', (string)$q) as $w) {
         $w = trim(preg_replace('/[^\p{L}\p{N}]/u', '', $w));
         if (mb_strlen($w) >= 2) $words[] = preg_quote($w, '/');
     }
-    if (!$words) return $escapedHtml;
+    if (!$words) return escape($rawText);
 
     // Длинные слова подсвечиваются первыми
     $words = array_values(array_unique($words));
-    usort($words, function ($a, $b) { return strlen($b) - strlen($a); });
+    usort($words, function ($a, $b) { return mb_strlen($b) - mb_strlen($a); });
 
     $re = '/(' . implode('|', $words) . ')/iu';
-    return preg_replace($re, '<mark class="search-mark">$1</mark>', $escapedHtml);
+    $parts = preg_split($re, $rawText, -1, PREG_SPLIT_DELIM_CAPTURE);
+    if ($parts === false) return escape($rawText);
+
+    $html = '';
+    foreach ($parts as $i => $part) {
+        if ($part === '') continue;
+        if ($i % 2 === 1) {
+            $html .= '<mark class="search-mark">' . escape($part) . '</mark>';
+        } else {
+            $html .= escape($part);
+        }
+    }
+    return $html;
 }
 
 /**

@@ -29,7 +29,7 @@ if (!headers_sent()) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= isset($pageTitle) ? escape($pageTitle) . ' - ' : '' ?>Форум</title>
-    <link rel="stylesheet" href="/assets/css/style.css">
+    <link rel="stylesheet" href="/assets/css/style.css?v=<?= @filemtime(__DIR__ . '/../assets/css/style.css') ?: 1 ?>">
     <script nonce="<?= $cspNonce ?>">
     window.FG_CONFIG = <?= json_encode([
         'titleMin'    => setting('title_min', 5),

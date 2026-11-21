@@ -38,6 +38,27 @@ $isStaff = isModerator();
 $staffFlag = $isStaff ? 1 : 0;
 $roles = ['user' => 'Участник', 'moderator' => 'Модератор', 'admin' => 'Администратор'];
 
+// Видимые счётчики (совпадают со списками ниже; стафф видит и скрытое)
+$stmt = $db->prepare("
+    SELECT COUNT(*) FROM topics t
+    JOIN forums f ON f.id = t.forum_id
+    JOIN categories c ON c.id = f.category_id
+    WHERE t.user_id = ? AND f.is_active = 1 AND c.is_active = 1 AND (t.is_hidden = 0 OR ? = 1)
+");
+$stmt->execute([$userId, $staffFlag]);
+$visibleTopics = (int)$stmt->fetchColumn();
+
+$stmt = $db->prepare("
+    SELECT COUNT(*) FROM posts p
+    JOIN topics t ON t.id = p.topic_id
+    JOIN forums f ON f.id = t.forum_id
+    JOIN categories c ON c.id = f.category_id
+    WHERE p.user_id = ? AND f.is_active = 1 AND c.is_active = 1
+      AND (p.is_hidden = 0 OR ? = 1) AND (t.is_hidden = 0 OR ? = 1)
+");
+$stmt->execute([$userId, $staffFlag, $staffFlag]);
+$visiblePosts = (int)$stmt->fetchColumn();
+
 // Вкладка
 $tab = ($_GET['tab'] ?? 'topics') === 'posts' ? 'posts' : 'topics';
 $perPage = max(1, setting('per_page_posts', 15));
@@ -45,15 +66,7 @@ $page = max(1, (int)($_GET['page'] ?? 1));
 $offset = ($page - 1) * $perPage;
 
 if ($tab === 'topics') {
-    $stmt = $db->prepare("
-        SELECT COUNT(*) FROM topics t
-        JOIN forums f ON f.id = t.forum_id
-        JOIN categories c ON c.id = f.category_id
-        WHERE t.user_id = ? AND f.is_active = 1 AND c.is_active = 1 AND (t.is_hidden = 0 OR ? = 1)
-    ");
-    $stmt->execute([$userId, $staffFlag]);
-    $total = (int)$stmt->fetchColumn();
-
+    $total = $visibleTopics;
     $totalPages = max(1, (int)ceil($total / $perPage));
     if ($page > $totalPages) { $page = $totalPages; $offset = ($page - 1) * $perPage; }
 
@@ -70,16 +83,7 @@ if ($tab === 'topics') {
     ");
     $stmt->execute([$staffFlag, $userId, $staffFlag]);
 } else {
-    $stmt = $db->prepare("
-        SELECT COUNT(*) FROM posts p
-        JOIN topics t ON t.id = p.topic_id
-        JOIN forums f ON f.id = t.forum_id
-        WHERE p.user_id = ? AND f.is_active = 1
-          AND (p.is_hidden = 0 OR ? = 1) AND (t.is_hidden = 0 OR ? = 1)
-    ");
-    $stmt->execute([$userId, $staffFlag, $staffFlag]);
-    $total = (int)$stmt->fetchColumn();
-
+    $total = $visiblePosts;
     $totalPages = max(1, (int)ceil($total / $perPage));
     if ($page > $totalPages) { $page = $totalPages; $offset = ($page - 1) * $perPage; }
 
@@ -89,7 +93,8 @@ if ($tab === 'topics') {
         FROM posts p
         JOIN topics t ON t.id = p.topic_id
         JOIN forums f ON f.id = t.forum_id
-        WHERE p.user_id = ? AND f.is_active = 1
+        JOIN categories c ON c.id = f.category_id
+        WHERE p.user_id = ? AND f.is_active = 1 AND c.is_active = 1
           AND (p.is_hidden = 0 OR ? = 1) AND (t.is_hidden = 0 OR ? = 1)
         ORDER BY p.created_at DESC, p.id DESC
         LIMIT $perPage OFFSET $offset
@@ -143,11 +148,11 @@ require_once __DIR__ . '/includes/header.php';
     <div class="profile-side">
         <div class="profile-stats">
             <div class="profile-stat">
-                <span class="profile-stat-value"><?= (int)$profile['topics_total'] ?></span>
+                <span class="profile-stat-value"><?= $visibleTopics ?></span>
                 <span class="profile-stat-label">Тем</span>
             </div>
             <div class="profile-stat">
-                <span class="profile-stat-value"><?= (int)$profile['posts_total'] ?></span>
+                <span class="profile-stat-value"><?= $visiblePosts ?></span>
                 <span class="profile-stat-label">Сообщений</span>
             </div>
         </div>
@@ -159,10 +164,10 @@ require_once __DIR__ . '/includes/header.php';
 
 <div class="tabs">
     <a href="/profile.php?id=<?= $userId ?>&tab=topics" class="tab <?= $tab === 'topics' ? 'active' : '' ?>">
-        Темы <span class="tab-count"><?= (int)$profile['topics_total'] ?></span>
+        Темы <span class="tab-count"><?= $visibleTopics ?></span>
     </a>
     <a href="/profile.php?id=<?= $userId ?>&tab=posts" class="tab <?= $tab === 'posts' ? 'active' : '' ?>">
-        Сообщения <span class="tab-count"><?= (int)$profile['posts_total'] ?></span>
+        Сообщения <span class="tab-count"><?= $visiblePosts ?></span>
     </a>
 </div>
 

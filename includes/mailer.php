@@ -1,14 +1,16 @@
 <?php
 // includes/mailer.php — отправка писем (mail() или простой SMTP).
+// Для прода рекомендуется PHPMailer/Symfony Mailer; этот клиент — fallback без зависимостей.
 require_once __DIR__ . '/functions.php';
 
-/**
- * Отправка письма. Возвращает true/false; ошибки пишет в error_log.
- */
 function sendMail($toEmail, $subject, $bodyText) {
     if (!filter_var($toEmail, FILTER_VALIDATE_EMAIL)) return false;
 
     $from = defined('MAIL_FROM') ? MAIL_FROM : 'noreply@localhost';
+    if (!filter_var($from, FILTER_VALIDATE_EMAIL)) {
+        error_log('sendMail: invalid MAIL_FROM');
+        return false;
+    }
     $fromName = defined('MAIL_FROM_NAME') ? MAIL_FROM_NAME : 'Forum';
     $transport = defined('MAIL_TRANSPORT') ? MAIL_TRANSPORT : 'mail';
 
@@ -27,7 +29,8 @@ function sendMail($toEmail, $subject, $bodyText) {
     foreach ($headers as $k => $v) $headerStr .= "$k: $v\r\n";
     $encodedSubject = mailEncodeHeader($subject);
 
-    $ok = @mail($toEmail, $encodedSubject, $bodyText, $headerStr, '-f' . $from);
+    // Envelope-from экранируем: защита от аргумент-инъекции в sendmail.
+    $ok = @mail($toEmail, $encodedSubject, $bodyText, $headerStr, '-f ' . escapeshellarg($from));
     if (!$ok) error_log("sendMail(mail) failed to $toEmail");
     return $ok;
 }
@@ -37,7 +40,7 @@ function mailEncodeHeader($text) {
 }
 
 /**
- * Минимальный SMTP-клиент (AUTH LOGIN, STARTTLS/SSL). Без внешних библиотек.
+ * Минимальный SMTP-клиент с проверкой кодов ответа на каждом шаге.
  */
 function smtpSend($from, $to, $subject, $body, $headers) {
     $host = defined('SMTP_HOST') ? SMTP_HOST : 'localhost';
@@ -51,52 +54,72 @@ function smtpSend($from, $to, $subject, $body, $headers) {
     if (!$fp) { error_log("SMTP connect failed: $errstr"); return false; }
     stream_set_timeout($fp, 10);
 
+    // Чтение полного ответа (multiline: последняя строка имеет пробел после кода).
     $read = function () use ($fp) {
         $data = '';
-        while ($line = fgets($fp, 512)) {
+        while (($line = fgets($fp, 512)) !== false) {
             $data .= $line;
             if (isset($line[3]) && $line[3] === ' ') break;
         }
         return $data;
     };
+    $code = function ($resp) { return substr(trim($resp), 0, 3); };
     $cmd = function ($c) use ($fp, $read) { fputs($fp, $c . "\r\n"); return $read(); };
-
-    $read();
-    $ehlo = $cmd('EHLO localhost');
-    if ($secure === 'tls') {
-        $cmd('STARTTLS');
-        if (!stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
-            error_log('SMTP STARTTLS failed'); fclose($fp); return false;
+    $expect = function ($resp, $want, $step) use ($code, $fp) {
+        $c = $code($resp);
+        if (!in_array($c, (array)$want, true)) {
+            error_log("SMTP $step failed ($c): " . trim($resp));
+            fclose($fp);
+            return false;
         }
-        $cmd('EHLO localhost');
+        return true;
+    };
+
+    $greeting = $read();
+    if (!$expect($greeting, '220', 'greeting')) return false;
+
+    $ehlo = $cmd('EHLO localhost');
+    if (!$expect($ehlo, '250', 'EHLO')) return false;
+
+    if ($secure === 'tls') {
+        $st = $cmd('STARTTLS');
+        if (!$expect($st, '220', 'STARTTLS')) return false;
+        if (!stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+            error_log('SMTP STARTTLS crypto failed'); fclose($fp); return false;
+        }
+        $ehlo = $cmd('EHLO localhost');
+        if (!$expect($ehlo, '250', 'EHLO after TLS')) return false;
     }
+
     if ($user !== '') {
-        $cmd('AUTH LOGIN');
-        $cmd(base64_encode($user));
-        $resp = $cmd(base64_encode($pass));
-        if (strpos($resp, '235') !== 0) { error_log('SMTP auth failed'); fclose($fp); return false; }
+        $a = $cmd('AUTH LOGIN');
+        if (!$expect($a, '334', 'AUTH')) return false;
+        $u = $cmd(base64_encode($user));
+        if (!$expect($u, '334', 'AUTH user')) return false;
+        $p = $cmd(base64_encode($pass));
+        if (!$expect($p, '235', 'AUTH pass')) return false;
     }
-    $cmd('MAIL FROM:<' . $from . '>');
-    $cmd('RCPT TO:<' . $to . '>');
-    $cmd('DATA');
+
+    $mf = $cmd('MAIL FROM:<' . $from . '>');
+    if (!$expect($mf, '250', 'MAIL FROM')) return false;
+    $rc = $cmd('RCPT TO:<' . $to . '>');
+    if (!$expect($rc, ['250', '251'], 'RCPT TO')) return false;
+    $dt = $cmd('DATA');
+    if (!$expect($dt, '354', 'DATA')) return false;
 
     $msg = '';
     foreach ($headers as $k => $v) $msg .= "$k: $v\r\n";
     $msg .= 'To: <' . $to . ">\r\n";
     $msg .= 'Subject: ' . mailEncodeHeader($subject) . "\r\n";
     $msg .= "\r\n" . str_replace("\n.", "\n..", $body) . "\r\n.";
-    $resp = $cmd($msg);
+    $end = $cmd($msg);
     $cmd('QUIT');
     fclose($fp);
 
-    $ok = strpos($resp, '250') === 0;
-    if (!$ok) error_log('SMTP DATA failed: ' . trim($resp));
-    return $ok;
+    if (!$expect($end, '250', 'DATA end')) return false;
+    return true;
 }
 
-/**
- * Ссылка на тему с учётом APP_URL.
- */
 function topicUrl($topicId, $postId = null) {
     $base = defined('APP_URL') ? rtrim(APP_URL, '/') : '';
     $url = $base . '/topic.php?id=' . (int)$topicId;

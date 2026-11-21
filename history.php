@@ -2,37 +2,27 @@
 require_once __DIR__ . '/includes/editing.php';
 require_once __DIR__ . '/includes/markdown.php';
 require_once __DIR__ . '/includes/pagination.php';
+require_once __DIR__ . '/includes/visibility.php';
 
 $db = Database::getInstance()->getConnection();
 $type = ($_GET['type'] ?? '') === 'post' ? 'post' : 'topic';
 $id = (int)($_GET['id'] ?? 0);
 
 $isStaff = isModerator();
-$staffFlag = $isStaff ? 1 : 0;
 
 if ($type === 'topic') {
-    $stmt = $db->prepare("
-        SELECT t.id, t.title, t.content, t.edit_count, t.id AS back_id
-        FROM topics t
-        JOIN forums f ON f.id = t.forum_id
-        JOIN categories c ON c.id = f.category_id
-        WHERE t.id = ? AND f.is_active = 1 AND c.is_active = 1
-          AND (t.is_hidden = 0 OR ? = 1)
-    ");
-    $stmt->execute([$id, $staffFlag]);
+    $t = loadVisibleTopic($id, false);
+    $obj = $t ? ['id' => $t['id'], 'title' => $t['title'], 'content' => $t['content'], 'edit_count' => $t['edit_count'], 'back_id' => $t['id']] : null;
 } else {
+    [$cond, $params] = visPostSql();
     $stmt = $db->prepare("
         SELECT p.id, NULL AS title, p.content, p.edit_count, p.topic_id AS back_id
-        FROM posts p
-        JOIN topics t ON t.id = p.topic_id
-        JOIN forums f ON f.id = t.forum_id
-        JOIN categories c ON c.id = f.category_id
-        WHERE p.id = ? AND f.is_active = 1 AND c.is_active = 1
-          AND (p.is_hidden = 0 OR ? = 1) AND (t.is_hidden = 0 OR ? = 1)
+        FROM posts p " . visPostJoins() . "
+        WHERE p.id = ? AND $cond
     ");
-    $stmt->execute([$id, $staffFlag, $staffFlag]);
+    $stmt->execute(array_merge([$id], $params));
+    $obj = $stmt->fetch() ?: null;
 }
-$obj = $stmt->fetch();
 
 if (!$obj) {
     http_response_code(404);
@@ -47,7 +37,6 @@ $backUrl = '/topic.php?id=' . (int)$obj['back_id'] . ($type === 'post' ? '#post-
 $pageTitle = 'История правок';
 $staff = isModerator();
 
-// Пагинация ревизий: по 10 на страницу, контент только текущей страницы
 $perPage = 10;
 $page = max(1, (int)($_GET['page'] ?? 1));
 

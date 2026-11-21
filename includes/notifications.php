@@ -3,9 +3,7 @@ require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/permissions.php';
 
 /**
- * SQL-условие: уведомление ведёт на доступный текущему пользователю контент.
- * Модерационные уведомления видны всегда; контентные — только если тема/пост
- * не скрыты (стафф видит всё) и раздел активен. Алиас таблицы: n.
+ * SQL-условие видимости уведомления (алиас n).
  */
 function notifVisibilityCond() {
     $staff = isModerator() ? 1 : 0;
@@ -21,7 +19,7 @@ function notifVisibilityCond() {
 }
 
 /**
- * Создание одного уведомления с учётом настроек получателя
+ * Одно уведомление с учётом настроек получателя.
  */
 function notifyUser($userId, $type, $actorId, $topicId, $postId, $excerpt = null) {
     $userId = (int)$userId;
@@ -38,7 +36,6 @@ function notifyUser($userId, $type, $actorId, $topicId, $postId, $excerpt = null
 
         if ($type === 'reply' && !$prefs['notify_replies']) return;
         if (($type === 'mention' || $type === 'quote') && !$prefs['notify_mentions']) return;
-        // moderation-уведомления приходят всегда
 
         $stmt = $db->prepare("
             INSERT IGNORE INTO notifications (user_id, type, actor_id, topic_id, post_id, excerpt)
@@ -54,8 +51,38 @@ function notifyUser($userId, $type, $actorId, $topicId, $postId, $excerpt = null
 }
 
 /**
- * Извлечение имён из @упоминаний и [quote=...] с указанием источника.
- * Возвращает [name => 'mention'|'quote']; mention приоритетнее quote.
+ * Пакетная рассылка одного типа уведомления списку получателей.
+ * Один INSERT ... SELECT с фильтром по prefs и is_active. Без N+1.
+ */
+function notifyUsersBatch(array $userIds, $type, $actorId, $topicId, $postId, $excerpt = null) {
+    $userIds = array_values(array_unique(array_map('intval', $userIds)));
+    $userIds = array_filter($userIds, fn($id) => $id > 0 && $id !== (int)$actorId);
+    if (!$userIds) return;
+
+    $prefCol = ($type === 'reply') ? 'notify_replies' : 'notify_mentions';
+    // moderation приходит всегда; для reply/mention/quote проверяем prefs.
+    $prefCond = in_array($type, ['reply', 'mention', 'quote'], true) ? " AND u.$prefCol = 1" : '';
+
+    try {
+        $db = Database::getInstance()->getConnection();
+        $in = implode(',', array_fill(0, count($userIds), '?'));
+        $excerptVal = $excerpt !== null ? mb_substr($excerpt, 0, 255) : null;
+
+        $sql = "
+            INSERT IGNORE INTO notifications (user_id, type, actor_id, topic_id, post_id, excerpt)
+            SELECT u.id, ?, ?, ?, ?, ?
+            FROM users u
+            WHERE u.id IN ($in) AND u.is_active = 1 $prefCond
+        ";
+        $params = array_merge([$type, (int)$actorId, (int)$topicId, $postId, $excerptVal], $userIds);
+        $db->prepare($sql)->execute($params);
+    } catch (PDOException $e) {
+        error_log('Notify batch error: ' . $e->getMessage());
+    }
+}
+
+/**
+ * Извлечение имён из @упоминаний и [quote=...].
  */
 function parseMentions($text) {
     $names = [];
@@ -68,9 +95,6 @@ function parseMentions($text) {
     return $names;
 }
 
-/**
- * Короткое превью без разметки
- */
 function mdExcerptSafe($text, $len = 200) {
     if (function_exists('mdExcerpt')) return mdExcerpt($text, $len);
     $t = preg_replace('/\s+/u', ' ', strip_tags((string)$text));
@@ -78,8 +102,8 @@ function mdExcerptSafe($text, $len = 200) {
 }
 
 /**
- * Рассылка уведомлений о новом ответе.
- * Приоритет: упоминания → автор темы → подписчики. Каждый получает одно событие.
+ * Рассылка уведомлений о новом ответе. Батчами, без N+1.
+ * Приоритет: упоминания → автор темы → подписчики.
  */
 function notifyTopicReply($topicId, $postId, $actorId, $content) {
     $db = Database::getInstance()->getConnection();
@@ -95,29 +119,39 @@ function notifyTopicReply($topicId, $postId, $actorId, $content) {
     $excerpt = mdExcerptSafe($content);
     $notified = [$actorId];
 
-    foreach (parseMentions($content) as $name => $kind) {
-        $stmt = $db->prepare("SELECT id FROM users WHERE username = ? AND is_active = 1");
-        $stmt->execute([$name]);
-        $uid = (int)$stmt->fetchColumn();
-        if (!$uid || in_array($uid, $notified, true)) continue;
-        notifyUser($uid, $kind, $actorId, $topicId, $postId, $excerpt);
-        $notified[] = $uid;
+    // 1) Упоминания/цитаты: резолвим имена одним запросом
+    $mentions = parseMentions($content);
+    if ($mentions) {
+        $names = array_keys($mentions);
+        $in = implode(',', array_fill(0, count($names), '?'));
+        $st = $db->prepare("SELECT id, username FROM users WHERE username IN ($in) AND is_active = 1");
+        $st->execute($names);
+        $byKind = ['mention' => [], 'quote' => []];
+        foreach ($st->fetchAll() as $row) {
+            $uid = (int)$row['id'];
+            if (in_array($uid, $notified, true)) continue;
+            $kind = $mentions[$row['username']] ?? 'mention';
+            $byKind[$kind][] = $uid;
+            $notified[] = $uid;
+        }
+        foreach ($byKind as $kind => $ids) {
+            if ($ids) notifyUsersBatch($ids, $kind, $actorId, $topicId, $postId, $excerpt);
+        }
     }
 
+    // 2) Автор темы
     $ownerId = (int)$topic['user_id'];
     if (!in_array($ownerId, $notified, true)) {
-        notifyUser($ownerId, 'reply', $actorId, $topicId, $postId, $excerpt);
+        notifyUsersBatch([$ownerId], 'reply', $actorId, $topicId, $postId, $excerpt);
         $notified[] = $ownerId;
     }
 
-    $stmt = $db->prepare("SELECT user_id FROM topic_subscriptions WHERE topic_id = ?");
-    $stmt->execute([$topicId]);
-    foreach ($stmt->fetchAll(PDO::FETCH_COLUMN) as $uid) {
-        $uid = (int)$uid;
-        if (in_array($uid, $notified, true)) continue;
-        notifyUser($uid, 'reply', $actorId, $topicId, $postId, $excerpt);
-        $notified[] = $uid;
-    }
+    // 3) Подписчики (исключая уже уведомлённых) — одним запросом+батчем
+    $st = $db->prepare("SELECT user_id FROM topic_subscriptions WHERE topic_id = ?");
+    $st->execute([$topicId]);
+    $subs = array_map('intval', $st->fetchAll(PDO::FETCH_COLUMN));
+    $subs = array_values(array_diff($subs, $notified));
+    if ($subs) notifyUsersBatch($subs, 'reply', $actorId, $topicId, $postId, $excerpt);
 }
 
 /**

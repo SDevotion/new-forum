@@ -155,14 +155,18 @@ $forumsList = $db->query("
     ORDER BY c.sort_order, f.sort_order
 ")->fetchAll();
 
-try {
-    $popular = $db->query("
-        SELECT query, COUNT(*) AS cnt FROM search_log
-        WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) AND results > 0
-        GROUP BY query ORDER BY cnt DESC LIMIT 10
-    ")->fetchAll();
-} catch (PDOException $e) {
-    $popular = [];
+// «Часто ищут» — только для модерации: тексты чужих запросов приватны.
+$popular = [];
+if ($staff) {
+    try {
+        $popular = $db->query("
+            SELECT query, COUNT(*) AS cnt FROM search_log
+            WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) AND results > 0
+            GROUP BY query ORDER BY cnt DESC LIMIT 10
+        ")->fetchAll();
+    } catch (PDOException $e) {
+        $popular = [];
+    }
 }
 
 $queryBase = '/search.php?q=' . urlencode($q) . '&scope=' . $scope . '&forum_id=' . $forumId
@@ -228,7 +232,7 @@ require_once __DIR__ . '/includes/header.php';
     </div>
 
     <?php if ($popular): ?>
-        <h2 class="section-title">Часто ищут</h2>
+        <h2 class="section-title">Часто ищут (видно только модерации)</h2>
         <div class="search-tags">
             <?php foreach ($popular as $p): ?>
                 <a href="/search.php?q=<?= urlencode($p['query']) ?>" class="search-tag">
@@ -263,9 +267,9 @@ require_once __DIR__ . '/includes/header.php';
                         <span class="badge <?= $r['kind'] === 'topic' ? 'badge-pin' : 'badge-closed' ?>">
                             <?= $r['kind'] === 'topic' ? 'Тема' : 'Сообщение' ?>
                         </span>
-                        <span class="search-title"><?= highlightWords(escape($r['title']), $q) ?></span>
+                        <span class="search-title"><?= highlightWords($r['title'], $q) ?></span>
                     </div>
-                    <div class="search-snippet"><?= highlightWords(escape($snippet), $q) ?></div>
+                    <div class="search-snippet"><?= highlightWords($snippet, $q) ?></div>
                     <div class="search-meta">
                         <img src="<?= avatarUrl($r['avatar']) ?>" alt="" class="search-avatar">
                         <?= escape($r['username']) ?>

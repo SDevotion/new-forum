@@ -357,12 +357,9 @@ ALTER TABLE `password_resets`
   ADD CONSTRAINT `password_resets_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 
 -- --------------------------------------------------------
--- Сид: первый администратор. Пароль: ChangeMe_123! — сменить сразу после входа.
-INSERT INTO `users` (`username`, `email`, `password_hash`, `role`) VALUES
-('admin', 'admin@example.com', '$2y$10$wH6ZkFQvJ8mYq3sXKz0OeO7rN1cT5uV9wX2yZ4aB6cD8eF0gH2iJ4', 'admin');
--- Хэш выше — заглушка формата bcrypt; реальный хэш генерируется install-скриптом ниже.
--- Если импортируете вручную, замените password_hash результатом:
---   php -r "echo password_hash('ChangeMe_123!', PASSWORD_DEFAULT);"
+-- Первый администратор создаётся CLI-скриптом (рабочий bcrypt-хэш):
+--   php install/create_admin.php admin you@example.com 'StrongPass_1'
+-- Не добавляйте админа вручную в SQL без настоящего хэша пароля.
 
 -- Стартовая структура
 INSERT INTO `categories` (`title`, `description`, `sort_order`) VALUES

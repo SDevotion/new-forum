@@ -75,6 +75,9 @@ $stmt = $db->prepare("
 $stmt->execute([$topicId, $isStaff ? 1 : 0]);
 $posts = $stmt->fetchAll();
 
+// Предзагрузка упоминаний одним запросом на всю страницу
+mdPrimeMentions(array_merge([$topic['content']], array_column($posts, 'content')));
+
 // Вложения: первое сообщение + ответы текущей страницы
 $topicAttachments = attachForObject('topic', $topicId);
 $postAttachments = attachForTargets('post', array_column($posts, 'id'));

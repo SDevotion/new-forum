@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/../includes/notifications.php';
 require_once __DIR__ . '/../includes/permissions.php';
+require_once __DIR__ . '/../includes/visibility.php';
 
 if (!isLoggedIn()) redirect('/auth/login.php');
 enforceActiveUser();
@@ -27,27 +28,25 @@ try {
 
     } elseif ($action === 'read') {
         $id = (int)($_POST['id'] ?? 0);
-        $stmt = $db->prepare("SELECT topic_id, post_id FROM notifications WHERE id = ? AND user_id = ?");
+        $stmt = $db->prepare("SELECT topic_id, post_id, excerpt FROM notifications WHERE id = ? AND user_id = ?");
         $stmt->execute([$id, $uid]);
         $n = $stmt->fetch();
 
         if ($n) {
             $db->prepare("UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?")->execute([$id, $uid]);
 
+            // Уведомления без привязки к теме (например, результат рассмотрения жалобы):
+            // переходить некуда — показываем текст и возвращаемся к списку.
+            if (empty($n['topic_id'])) {
+                setFlashMessage('info', $n['excerpt'] ?: 'Уведомление прочитано');
+                redirect($back);
+            }
+
             $topicId = (int)$n['topic_id'];
             $url = '/topic.php?id=' . $topicId;
 
-            // Тема могла быть скрыта или её раздел отключён — проверяем доступность
-            // (стафф видит скрытые темы, как и в topic.php)
-            $staffFlag = isModerator() ? 1 : 0;
-            $st = $db->prepare("
-                SELECT t.id FROM topics t
-                JOIN forums f ON f.id = t.forum_id
-                JOIN categories c ON c.id = f.category_id
-                WHERE t.id = ? AND f.is_active = 1 AND c.is_active = 1 AND (t.is_hidden = 0 OR ? = 1)
-            ");
-            $st->execute([$topicId, $staffFlag]);
-            if (!$st->fetch()) {
+            // Тема могла быть скрыта или её раздел отключён — единая проверка видимости
+            if (!topicVisible($topicId)) {
                 setFlashMessage('info', 'Тема больше недоступна');
                 redirect($back);
             }
@@ -55,6 +54,7 @@ try {
             // Вычисляем страницу пагинации, на которой находится пост
             // (скрытые посты учитываются для стаффа — как в topic.php)
             if ($n['post_id']) {
+                $staffFlag = isModerator() ? 1 : 0;
                 $postId = (int)$n['post_id'];
                 $st = $db->prepare("SELECT created_at, is_hidden FROM posts WHERE id = ? AND topic_id = ?");
                 $st->execute([$postId, $topicId]);
@@ -67,17 +67,15 @@ try {
                     setFlashMessage('info', 'Сообщение было удалено');
                     redirect($url);
                 }
-                if ($p) {
-                    $st = $db->prepare("
-                        SELECT COUNT(*) FROM posts
-                        WHERE topic_id = ? AND (is_hidden = 0 OR ? = 1)
-                          AND (created_at < ? OR (created_at = ? AND id <= ?))
-                    ");
-                    $st->execute([$topicId, $staffFlag, $p['created_at'], $p['created_at'], $postId]);
-                    $pos = (int)$st->fetchColumn();
-                    $url .= '&page=' . max(1, (int)ceil($pos / max(1, setting('per_page_posts', 15))));
-                    $url .= '#post-' . $postId;
-                }
+                $st = $db->prepare("
+                    SELECT COUNT(*) FROM posts
+                    WHERE topic_id = ? AND (is_hidden = 0 OR ? = 1)
+                      AND (created_at < ? OR (created_at = ? AND id <= ?))
+                ");
+                $st->execute([$topicId, $staffFlag, $p['created_at'], $p['created_at'], $postId]);
+                $pos = (int)$st->fetchColumn();
+                $url .= '&page=' . max(1, (int)ceil($pos / max(1, setting('per_page_posts', 15))));
+                $url .= '#post-' . $postId;
             }
             redirect($url);
         }

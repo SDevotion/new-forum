@@ -1,8 +1,9 @@
 <?php
 // includes/session.php — хранение сессий в БД (таблица user_sessions).
 // Запись только при изменении данных или раз в 5 минут.
-// Авторизованные сессии сериализуются локом на запись (защита антидубля/CSRF);
-// гостевые — без лока на запись (быстрые просмотры/скачивания).
+// Авторизованные сессии: лок берётся в read() и держится до write()/close() —
+// параллельные запросы одной сессии сериализуются ЦЕЛИКОМ (антидубль, flash, CSRF).
+// Гостевые — без лока (быстрые просмотры/скачивания).
 
 require_once __DIR__ . '/../config/database.php';
 
@@ -16,19 +17,20 @@ class DbSessionHandler implements SessionHandlerInterface {
     private $lastPayload = null;
     private $lastWriteTs = 0;
     private $exists = false;
+    private $lockedForUid = 0;
 
     public function __construct() {
         $this->db = Database::getInstance()->getConnection();
     }
 
     private function acquireLock($id) {
-        $this->lockName = 'sess:' . md5($id);
-        $st = $this->db->prepare("SELECT GET_LOCK(?, 5)");
-        $st->execute([$this->lockName]);
+        $name = 'sess:' . md5($id);
+        $st = $this->db->prepare("SELECT GET_LOCK(?, 10)");
+        $st->execute([$name]);
         if ((int)$st->fetchColumn() !== 1) {
-            $this->lockName = null;
             return false;
         }
+        $this->lockName = $name;
         return true;
     }
 
@@ -51,12 +53,8 @@ class DbSessionHandler implements SessionHandlerInterface {
 
     public function read($id) {
         try {
-            if (!$this->acquireLock($id)) {
-                error_log('Session lock timeout: ' . $id);
-                return '';
-            }
             $stmt = $this->db->prepare(
-                "SELECT payload, UNIX_TIMESTAMP(updated_ts) AS ts
+                "SELECT user_id, payload, UNIX_TIMESTAMP(updated_ts) AS ts
                  FROM user_sessions WHERE session_token = ? AND expires_at > NOW()"
             );
             try {
@@ -64,23 +62,34 @@ class DbSessionHandler implements SessionHandlerInterface {
                 $row = $stmt->fetch();
             } catch (PDOException $e) {
                 $stmt = $this->db->prepare(
-                    "SELECT payload, UNIX_TIMESTAMP(created_at) AS ts
+                    "SELECT user_id, payload, UNIX_TIMESTAMP(created_at) AS ts
                      FROM user_sessions WHERE session_token = ? AND expires_at > NOW()"
                 );
                 $stmt->execute([$id]);
                 $row = $stmt->fetch();
             }
-            $this->releaseLock();
 
             if (!$row) {
                 $this->exists = false;
                 $this->lastPayload = null;
                 $this->lastWriteTs = 0;
+                $this->lockedForUid = 0;
                 return '';
             }
             $this->exists = true;
             $this->lastPayload = (string)$row['payload'];
             $this->lastWriteTs = (int)$row['ts'];
+            $this->lockedForUid = (int)$row['user_id'];
+
+            // Авторизованная сессия: держим лок весь запрос (до write/close).
+            // Так два параллельных POST не прочитают одинаковый payload.
+            if ($this->lockedForUid > 0 && !$this->acquireLock($id)) {
+                error_log('Session lock timeout: ' . $id);
+                // Не отдаём данные без лока — иначе возможна гонка записи.
+                $this->exists = false;
+                $this->lastPayload = null;
+                return '';
+            }
             return $this->lastPayload;
         } catch (PDOException $e) {
             error_log('Session read error: ' . $e->getMessage());
@@ -92,11 +101,11 @@ class DbSessionHandler implements SessionHandlerInterface {
     public function write($id, $data) {
         $uid = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : 0;
 
-        // Авторизованные действия сериализуем: защита антидубля постов и CSRF-ротации.
-        $needLock = ($uid > 0);
-        if ($needLock && !$this->acquireLock($id)) {
+        // Логин в этом запросе (гость -> пользователь): лока ещё нет — берём.
+        // Если лок уже удерживается с read(), повторно не берём.
+        $needNewLock = ($uid > 0 && $this->lockName === null);
+        if ($needNewLock && !$this->acquireLock($id)) {
             error_log('Session write lock timeout: ' . $id);
-            // Не пишем вслепую — лучше потерять обновление сессии, чем создать дубль поста.
             return false;
         }
 
@@ -162,7 +171,8 @@ class DbSessionHandler implements SessionHandlerInterface {
             error_log('Session write error: ' . $e->getMessage());
             return false;
         } finally {
-            if ($needLock) $this->releaseLock();
+            // Лок освобождаем здесь (или в close(), если write не вызывался).
+            $this->releaseLock();
         }
     }
 
@@ -175,6 +185,8 @@ class DbSessionHandler implements SessionHandlerInterface {
         } catch (PDOException $e) {
             error_log('Session destroy error: ' . $e->getMessage());
             return false;
+        } finally {
+            $this->releaseLock();
         }
     }
 

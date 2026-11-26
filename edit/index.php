@@ -16,7 +16,7 @@ $id = (int)($_REQUEST['id'] ?? 0);
 if ($type === 'topic') {
     $stmt = $db->prepare("
         SELECT t.id, t.user_id, t.title, t.content, t.created_at, t.forum_id,
-               t.is_hidden, t.is_closed,
+               t.is_hidden, t.is_closed, t.edit_count,
                f.title AS context_title
         FROM topics t
         JOIN forums f ON f.id = t.forum_id
@@ -27,7 +27,7 @@ if ($type === 'topic') {
 } else {
     $stmt = $db->prepare("
         SELECT p.id, p.user_id, NULL AS title, p.content, p.created_at, p.topic_id,
-               p.is_hidden, t.is_closed,
+               p.is_hidden, t.is_closed, p.edit_count,
                t.title AS context_title
         FROM posts p
         JOIN topics t ON t.id = p.topic_id
@@ -111,18 +111,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $hideRevision = $isStaff && (int)$me['id'] !== (int)$obj['user_id'];
                 saveRevision($type, $id, $obj['title'], $obj['content'], $reason, $hideRevision);
 
+                // Оптимистичная блокировка: если объект изменился с момента открытия
+                // формы (edit_count вырос), правку отклоняем — иначе lost update.
+                $baseVersion = (int)($_POST['edit_version'] ?? $obj['edit_count']);
                 if ($type === 'topic') {
-                    $db->prepare("
+                    $st = $db->prepare("
                         UPDATE topics
                         SET title = ?, content = ?, edited_at = NOW(), edited_by = ?, edit_count = edit_count + 1
-                        WHERE id = ?
-                    ")->execute([$title, $content, $me['id'], $id]);
+                        WHERE id = ? AND edit_count = ?
+                    ");
+                    $st->execute([$title, $content, $me['id'], $id, $baseVersion]);
                 } else {
-                    $db->prepare("
+                    $st = $db->prepare("
                         UPDATE posts
                         SET content = ?, updated_at = NOW(), edited_by = ?, edit_count = edit_count + 1
-                        WHERE id = ?
-                    ")->execute([$content, $me['id'], $id]);
+                        WHERE id = ? AND edit_count = ?
+                    ");
+                    $st->execute([$content, $me['id'], $id, $baseVersion]);
+                }
+                if ($st->rowCount() === 0) {
+                    $db->rollBack();
+                    setFlashMessage('error', 'Сообщение уже изменено кем-то другим. Откройте редактор заново.');
+                    redirect($backUrl);
                 }
                 // Удаление отмеченных вложений (файлы с диска — только после commit)
                 $removedNames = [];
@@ -185,6 +195,7 @@ require_once __DIR__ . '/../includes/header.php';
         <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
         <input type="hidden" name="type" value="<?= $type ?>">
         <input type="hidden" name="id" value="<?= $id ?>">
+        <input type="hidden" name="edit_version" value="<?= (int)$obj['edit_count'] ?>">
 
         <?php if ($type === 'topic'): ?>
             <div class="form-group">

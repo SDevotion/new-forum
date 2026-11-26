@@ -16,7 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Недействительный запрос. Попробуйте снова.';
-    } elseif (!rateLimitCheck('login', $loginMax * 4, $loginWindow, true)) {
+    } elseif (!rateLimitCheck('login', max(20, $loginMax * 10), $loginWindow, true)) {
         $errors[] = 'Слишком много попыток входа. Подождите ' . ceil(rateLimitRetryAfter('login', $loginWindow, true) / 60) . ' мин. и попробуйте снова.';
     } else {
         $username = trim($_POST['username'] ?? '');
@@ -39,7 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                    ->execute([$pairKey, $loginWindow]);
                 $st = $db->prepare("SELECT COUNT(*) FROM rate_limits WHERE action = 'login_pair' AND actor_key = ?");
                 $st->execute([$pairKey]);
-                if ((int)$st->fetchColumn() < $loginMax) {
+                if ((int)$st->fetchColumn() < max(5, $loginMax)) {
                     $db->prepare("INSERT INTO rate_limits (action, actor_key, ip_address) VALUES ('login_pair', ?, ?)")
                        ->execute([$pairKey, rateLimitIp()]);
                     $pairAllowed = true;

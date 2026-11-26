@@ -87,7 +87,7 @@ require_once __DIR__ . '/includes/header.php';
                     <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
                     <input type="hidden" name="action" value="read">
                     <input type="hidden" name="id" value="<?= (int)$n['id'] ?>">
-                    <button type="submit" class="notif-main">
+                    <button type="submit" class="notif-main" title="Открыть и отметить прочитанным">
                         <span class="notif-icon"><?= $icon ?></span>
                         <img src="<?= avatarUrl($n['actor_avatar']) ?>" alt="" class="notif-avatar">
                         <span class="notif-body">

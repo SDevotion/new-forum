@@ -24,11 +24,23 @@ if (!$topic) {
     exit;
 }
 
-// Счётчик просмотров: только авторизованные участники (не автор и не стафф),
-// не чаще раза за сессию. Гости/боты не учитываются — метрику нельзя накрутить
-// массовым созданием гостевых сессий. Отметки живут в payload, FIFO-лимит 500.
+// Счётчик просмотров: участники — раз за сессию (не автор/стафф);
+// гости — не чаще раза в час на IP+тему (антинакрутка без cookie-jar).
 $isAuthorView = isLoggedIn() && (int)$_SESSION['user_id'] === (int)$topic['user_id'];
-if (isLoggedIn() && !$isStaff && !$isAuthorView && sessionMarkOnce('viewed_topics', $topicId)) {
+$countView = false;
+if (isLoggedIn() && !$isStaff && !$isAuthorView) {
+    $countView = sessionMarkOnce('viewed_topics', $topicId);
+} elseif (!isLoggedIn()) {
+    require_once __DIR__ . '/includes/ratelimit.php';
+    $vKey = 'ip' . rateLimitIp() . ':t' . $topicId;
+    try {
+        $db->prepare("DELETE FROM post_dedup WHERE dedup_key = ? AND created_at < (NOW() - INTERVAL 1 HOUR)")
+           ->execute([$vKey]);
+        $db->prepare("INSERT INTO post_dedup (dedup_key) VALUES (?)")->execute([$vKey]);
+        $countView = true;
+    } catch (PDOException $e) { /* параллельный хит — уже посчитан */ }
+}
+if ($countView) {
     $db->prepare("UPDATE topics SET views_count = views_count + 1 WHERE id = ?")->execute([$topicId]);
     $topic['views_count']++;
 }

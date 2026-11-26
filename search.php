@@ -57,11 +57,9 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < $searchMin) {
     $error = "Запрос слишком короткий. Минимум $searchMin символа.";
 } elseif (mb_strlen($q) > $searchMax) {
     $error = "Запрос слишком длинный. Максимум $searchMax символов.";
+} elseif ($author !== '' && $authorId === 0) {
+    $error = 'Автор «' . $author . '» не найден. Проверьте ник или уберите фильтр.';
 } elseif ($ft !== '') {
-    if (ftQueryDroppedShort()) {
-        $error = 'Часть слов короче 2 символов пропущена поиском.';
-    }
-
     $hiddenT = $staff ? '' : ' AND t.is_hidden = 0';
     $hiddenP = $staff ? '' : ' AND p.is_hidden = 0';
     $forumT  = $forumId ? ' AND t.forum_id = ' . $forumId : '';

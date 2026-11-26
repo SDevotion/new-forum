@@ -138,8 +138,9 @@ require_once __DIR__ . '/includes/header.php';
                     <span>🔗 <a href="<?= escape($profile['website']) ?>" target="_blank" rel="noopener nofollow noreferrer"><?= escape($profile['website']) ?></a></span>
                 <?php endif; ?>
                 <span>📅 На форуме с <?= date('d.m.Y', strtotime($profile['created_at'])) ?></span>
-                <?php if ($profile['last_login']): ?>
-                    <span>🕒 Был(а) <?= date('d.m.Y H:i', strtotime($profile['last_login'])) ?></span>
+                <?php $lastSeen = $profile['last_activity'] ?: $profile['last_login']; ?>
+                <?php if ($lastSeen): ?>
+                    <span>🕒 Был(а) <?= date('d.m.Y H:i', strtotime($lastSeen)) ?></span>
                 <?php endif; ?>
             </div>
         </div>

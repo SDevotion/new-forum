@@ -57,7 +57,8 @@ $popTopics = $db->query("
     ORDER BY ((SELECT COUNT(*) FROM posts vp WHERE vp.topic_id = t.id AND vp.is_hidden = 0) * 2 + t.views_count / 10) DESC, t.id DESC LIMIT 10
 ")->fetchAll();
 
-// Активность за 14 дней
+// Активность за 14 дней. NB: дни фиксировались триггерами по CURDATE() на момент
+// записи; смена APP_TIMEZONE задним числом границы прошлых дней не меняет.
 $chart = $db->query("
     SELECT day, topics, posts, users FROM forum_stats_daily
     WHERE day >= DATE_SUB(CURDATE(), INTERVAL 13 DAY)

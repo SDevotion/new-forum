@@ -41,9 +41,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $new = $_POST['new_password'] ?? '';
             $confirm = $_POST['new_password_confirm'] ?? '';
 
-            // Антибрутфорс старого пароля: не более 5 попыток за 15 минут на аккаунт.
-            if (!rateLimitCheck('password_change', 5, 900)) {
-                $passErrors[] = 'Слишком много попыток смены пароля. Подождите ' . ceil(rateLimitRetryAfter('password_change', 900) / 60) . ' мин.';
+            // Антибрутфорс: лимит считаем ТОЛЬКО по неудачным проверкам старого пароля.
+            // Успешная смена не тратит квоту — угнанная сессия не может запереть
+            // владельцу форму смены пароля исчерпанием лимита.
+            $db0 = Database::getInstance()->getConnection();
+            $pcKey = 'u' . $userId;
+            $st = $db0->prepare("SELECT COUNT(*) FROM rate_limits WHERE action = 'password_change' AND actor_key = ? AND created_at >= (NOW() - INTERVAL 900 SECOND)");
+            $st->execute([$pcKey]);
+            if ((int)$st->fetchColumn() >= 5) {
+                $passErrors[] = 'Слишком много неудачных попыток. Подождите 15 минут.';
             } else {
                 $stmt = $db->prepare("SELECT password_hash FROM users WHERE id = ?");
                 $stmt->execute([$userId]);
@@ -54,6 +60,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } else {
                     if (!password_verify($old, $hash)) {
                         $passErrors[] = 'Текущий пароль указан неверно';
+                        $db0->prepare("INSERT INTO rate_limits (action, actor_key, ip_address) VALUES ('password_change', ?, ?)")
+                            ->execute([$pcKey, rateLimitIp()]);
                     }
                     if (mb_strlen($new) < setting('password_min', 6)) {
                         $passErrors[] = 'Новый пароль должен содержать минимум ' . setting('password_min', 6) . ' символов';

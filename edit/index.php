@@ -106,7 +106,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (empty($errors)) {
             try {
                 $db->beginTransaction();
-                saveRevision($type, $id, $obj['title'], $obj['content'], $reason);
+                // Правка модератора чужого объекта: старая версия скрывается от публики
+                // (зачистка контента не должна обходиться через историю правок).
+                $hideRevision = $isStaff && (int)$me['id'] !== (int)$obj['user_id'];
+                saveRevision($type, $id, $obj['title'], $obj['content'], $reason, $hideRevision);
 
                 if ($type === 'topic') {
                     $db->prepare("

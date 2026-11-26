@@ -84,6 +84,24 @@ set_exception_handler(function ($e) {
     exit;
 });
 
+// Fatal errors (parse/TypeError/memory) не ловятся set_exception_handler —
+// добиваем их shutdown-хендлером, чтобы прод не отдавал белый экран.
+register_shutdown_function(function () {
+    $e = error_get_last();
+    if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+        error_log('Fatal: ' . $e['message'] . ' @ ' . $e['file'] . ':' . $e['line']);
+        if (!headers_sent()) http_response_code(500);
+        if (APP_DEBUG) {
+            echo '<pre style="padding:24px;background:#fee2e2;color:#991b1b">' . htmlspecialchars($e['message'] . ' @ ' . $e['file'] . ':' . $e['line']) . '</pre>';
+        } else {
+            echo '<!DOCTYPE html><html lang="ru"><meta charset="utf-8"><title>Ошибка</title>'
+               . '<body style="font-family:sans-serif;padding:48px;text-align:center">'
+               . '<h1>Внутренняя ошибка</h1><p>Попробуйте позже.</p>'
+               . '<p><a href="/index.php">На главную</a></p></body></html>';
+        }
+    }
+});
+
 class Database {
     private static $instance = null;
     private $connection;
@@ -122,6 +140,17 @@ class Database {
     }
 
     public function getConnection() {
+        // В CLI (maintenance/create_admin) соединение может умереть по wait_timeout —
+        // пингуем и переподключаемся. В веб-запросах соединение всегда свежее.
+        if (PHP_SAPI === 'cli') {
+            try {
+                $this->connection->query("SELECT 1");
+            } catch (PDOException $e) {
+                error_log('DB reconnect: ' . $e->getMessage());
+                $fresh = new self();
+                $this->connection = $fresh->connection;
+            }
+        }
         return $this->connection;
     }
 }

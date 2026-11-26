@@ -12,7 +12,7 @@ $type = ($_POST['target_type'] ?? '') === 'post' ? 'post' : 'topic';
 $id = (int)($_POST['target_id'] ?? 0);
 $reason = trim($_POST['reason'] ?? '');
 $back = $_POST['back'] ?? '/index.php';
-if (!preg_match('~^/[A-Za-z0-9_./?=&#%-]*$~', $back)) $back = '/index.php';
+if (!preg_match('~^/(?![/\\\\])[A-Za-z0-9_./?=&#%-]*$~', $back)) $back = '/index.php';
 
 if ($id <= 0) { setFlashMessage('error', 'Объект не найден'); redirect($back); }
 

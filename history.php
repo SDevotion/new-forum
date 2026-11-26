@@ -40,7 +40,8 @@ $staff = isModerator();
 $perPage = 10;
 $page = max(1, (int)($_GET['page'] ?? 1));
 
-$st = $db->prepare("SELECT COUNT(*) FROM post_edits WHERE target_type = ? AND target_id = ?");
+$revVis = $isStaff ? '' : ' AND is_hidden = 0';
+$st = $db->prepare("SELECT COUNT(*) FROM post_edits WHERE target_type = ? AND target_id = ?$revVis");
 $st->execute([$type, $id]);
 $totalRevisions = (int)$st->fetchColumn();
 $totalPages = max(1, (int)ceil($totalRevisions / $perPage));
@@ -51,7 +52,7 @@ $st = $db->prepare("
     SELECT e.*, u.username, u.avatar
     FROM post_edits e
     JOIN users u ON u.id = e.editor_id
-    WHERE e.target_type = ? AND e.target_id = ?
+    WHERE e.target_type = ? AND e.target_id = ?$revVis
     ORDER BY e.created_at DESC, e.id DESC
     LIMIT $perPage OFFSET $offset
 ");
@@ -95,6 +96,7 @@ require_once __DIR__ . '/includes/header.php';
             <summary class="revision-summary">
                 <span class="revision-num">Версия <?= $versionNum ?></span>
                 <span class="revision-meta"><?= escape($rev['username']) ?> · <?= date('d.m.Y H:i', strtotime($rev['created_at'])) ?></span>
+                <?php if ($isStaff && $rev['is_hidden']): ?><span class="badge badge-banned">скрыта от участников</span><?php endif; ?>
                 <?php if ($rev['reason']): ?><span class="revision-reason"><?= escape($rev['reason']) ?></span><?php endif; ?>
             </summary>
             <div class="revision-body">

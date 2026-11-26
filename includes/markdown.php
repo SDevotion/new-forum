@@ -1,7 +1,8 @@
 <?php
 /**
  * Мини-парсер Markdown -> безопасный HTML.
- * Весь текст экранируется ДО разбора, поэтому XSS невозможен.
+ * Текст экранируется ДО разбора; URL ссылок дополнительно ограничены
+ * whitelist-символами, не содержащими & и кавычки — инъекция атрибутов невозможна.
  */
 
 /**
@@ -54,6 +55,28 @@ function mdMentionId($name) {
     $cache[$name] = $id;
     $GLOBALS['__md_mention_cache'] = $cache;
     return $id;
+}
+
+/**
+ * Убирает код-блоки и inline-код из текста. Для парсинга упоминаний:
+ * @ник внутри кода — пример кода, а не упоминание (совпадает с поведением рендера).
+ */
+function mdStripCode($text) {
+    $t = preg_replace('/```.*?```/s', ' ', (string)$text);
+    return preg_replace('/`[^`\n]+`/', ' ', $t);
+}
+
+/**
+ * Безопасный URL для вставки в href уже экранированного HTML.
+ * Разрешены только символы, которые htmlspecialchars НЕ преобразует,
+ * поэтому HTML-сущности (&quot; и т.п.) в атрибут попасть не могут.
+ */
+function mdSafeUrl($url) {
+    $url = trim((string)$url);
+    if (!preg_match('#^https?://#i', $url)) return null;
+    if (!preg_match('#^[a-zA-Z0-9:/._~%\-+?=\#@!\$*,;()\[\]]+$#', $url)) return null;
+    if (strlen($url) > 500) return null;
+    return $url;
 }
 
 function mdRender($text) {
@@ -139,12 +162,26 @@ function mdRender($text) {
     $html = preg_replace('/(?<![*\w])\*(?=\S)([^*\n]+?)(?<=\S)\*(?!\*)/', '<em>$1</em>', $html);
     $html = preg_replace('/~~(?=\S)(.+?)(?<=\S)~~/s', '<del>$1</del>', $html);
 
+    // [текст](url): URL проходит whitelist; небезопасный URL — ссылка не создаётся
     $html = preg_replace_callback('/\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]{1,500})\)/', function ($m) {
-        return '<a href="' . $m[2] . '" class="md-link" target="_blank" rel="nofollow noopener noreferrer">' . $m[1] . '</a>';
+        $url = mdSafeUrl($m[2]);
+        if ($url === null) return $m[0];
+        return '<a href="' . $url . '" class="md-link" target="_blank" rel="nofollow noopener noreferrer">' . $m[1] . '</a>';
     }, $html);
 
-    $html = preg_replace_callback('/(?<![">=\w])(https?:\/\/[^\s<>"\']{1,500})/', function ($m) {
-        return '<a href="' . $m[1] . '" class="md-link" target="_blank" rel="nofollow noopener noreferrer">' . $m[1] . '</a>';
+    // Автоссылки: захватываем только whitelist-символы (без &, кавычек, <, >),
+    // поэтому HTML-сущности не могут «разорвать» атрибут href.
+    $html = preg_replace_callback('#(?<![">=\w/])(https?://[a-zA-Z0-9:/._~%\-+?=\#@!\$*,;()\[\]]{1,500})#', function ($m) {
+        $url = mdSafeUrl($m[1]);
+        if ($url === null) return $m[0];
+        // хвостовая пунктуация не входит в ссылку
+        $trail = '';
+        while ($url !== '' && strpos('.,;:!)]', substr($url, -1)) !== false) {
+            $trail = substr($url, -1) . $trail;
+            $url = substr($url, 0, -1);
+        }
+        if ($url === '' || !preg_match('#^https?://.+#i', $url)) return $m[0];
+        return '<a href="' . $url . '" class="md-link" target="_blank" rel="nofollow noopener noreferrer">' . $url . '</a>' . $trail;
     }, $html);
 
     // @упоминания: id берутся из предзагруженного кэша (без запроса на имя)

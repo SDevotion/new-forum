@@ -21,9 +21,11 @@ function recountForum($forumId) {
         WHERE f.id = ?
     ")->execute([$forumId]);
 
+    // «Последнее сообщение» — только видимое (скрытый пост не должен быть витриной раздела)
     $st = $db->prepare("
         SELECT p.id FROM posts p JOIN topics t ON t.id = p.topic_id
-        WHERE t.forum_id = ? ORDER BY p.created_at DESC, p.id DESC LIMIT 1
+        WHERE t.forum_id = ? AND p.is_hidden = 0 AND t.is_hidden = 0
+        ORDER BY p.created_at DESC, p.id DESC LIMIT 1
     ");
     $st->execute([$forumId]);
     $lastId = $st->fetchColumn() ?: null;
@@ -40,7 +42,9 @@ function recountTopic($topicId) {
     $db->prepare("
         UPDATE topics t
         SET replies_count = (SELECT COUNT(*) FROM posts p WHERE p.topic_id = t.id),
-            last_post_at  = COALESCE((SELECT MAX(p.created_at) FROM posts p WHERE p.topic_id = t.id), t.created_at)
+            last_post_at  = COALESCE(
+                (SELECT MAX(p.created_at) FROM posts p WHERE p.topic_id = t.id AND p.is_hidden = 0),
+                t.created_at)
         WHERE t.id = ?
     ")->execute([$topicId]);
 }
@@ -80,7 +84,9 @@ function recountAll() {
     $db->exec("
         UPDATE topics t
         SET replies_count = (SELECT COUNT(*) FROM posts p WHERE p.topic_id = t.id),
-            last_post_at  = COALESCE((SELECT MAX(p.created_at) FROM posts p WHERE p.topic_id = t.id), t.created_at)
+            last_post_at  = COALESCE(
+                (SELECT MAX(p.created_at) FROM posts p WHERE p.topic_id = t.id AND p.is_hidden = 0),
+                t.created_at)
     ");
     $db->exec("
         UPDATE users u

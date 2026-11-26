@@ -30,7 +30,11 @@ $results = [];
 $total = 0;
 $totalPages = 1;
 $error = '';
+$notice = '';
 $ft = ftQuery($q);
+if ($ft !== '' && ftQueryDroppedShort()) {
+    $notice = 'Слова короче 2 символов пропущены поиском.';
+}
 
 $dateSql = [
     'any'   => '',
@@ -54,6 +58,9 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < $searchMin) {
 } elseif (mb_strlen($q) > $searchMax) {
     $error = "Запрос слишком длинный. Максимум $searchMax символов.";
 } elseif ($ft !== '') {
+    if (ftQueryDroppedShort()) {
+        $error = 'Часть слов короче 2 символов пропущена поиском.';
+    }
 
     $hiddenT = $staff ? '' : ' AND t.is_hidden = 0';
     $hiddenP = $staff ? '' : ' AND p.is_hidden = 0';
@@ -65,7 +72,7 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < $searchMin) {
     $dateP   = $dateSql ? sprintf($dateSql, 'p') : '';
 
     $sqlTopics = "
-        SELECT 'topic' AS kind, t.id, t.id AS topic_id, t.title, t.content,
+        SELECT 'topic' AS kind, t.id, t.id AS topic_id, t.title, LEFT(t.content, 4000) AS content,
                t.created_at,
                (SELECT COUNT(*) FROM posts vp WHERE vp.topic_id = t.id AND (vp.is_hidden = 0 OR ? = 1)) AS replies_count,
                t.views_count,
@@ -81,7 +88,7 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < $searchMin) {
     ";
 
     $sqlPosts = "
-        SELECT 'post' AS kind, p.id, p.topic_id, t.title, p.content,
+        SELECT 'post' AS kind, p.id, p.topic_id, t.title, LEFT(p.content, 4000) AS content,
                p.created_at, 0 AS replies_count, 0 AS views_count,
                u.username, u.avatar, f.title AS forum_title,
                MATCH(p.content) AGAINST (? IN BOOLEAN MODE) AS score
@@ -99,8 +106,6 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < $searchMin) {
            : ($sort === 'new' ? 'created_at DESC, kind ASC, id DESC' : 'created_at ASC, kind ASC, id ASC');
 
     try {
-        // Единый прогон: total считаем оконной функцией в том же запросе,
-        // MATCH не выполняется дважды (COUNT-подзапрос убран).
         if ($scope === 'topics') {
             $inner = $sqlTopics;
             $params = [$staff ? 1 : 0, $ft, $ft];
@@ -112,31 +117,32 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < $searchMin) {
             $params = [$staff ? 1 : 0, $ft, $ft, $ft, $ft];
         }
 
+        // Страница данных: LIMIT применяется к сортировке без материализации total.
         $st = $db->prepare("
-            SELECT x.*, COUNT(*) OVER () AS full_total
-            FROM ($inner) x
+            SELECT x.* FROM ($inner) x
             ORDER BY $order
             LIMIT $perPage OFFSET $offset
         ");
         $st->execute($params);
         $results = $st->fetchAll();
 
-        if ($results) {
-            $total = (int)$results[0]['full_total'];
-        } else {
-            // Пустая страница за пределами диапазона — узнаём total дешёвым COUNT
-            $cnt = $db->prepare("SELECT COUNT(*) FROM ($inner) x");
-            $cnt->execute($params);
-            $total = (int)$cnt->fetchColumn();
-        }
+        // Total — отдельным лёгким COUNT поверх тех же условий (без выборки content).
+        // Оконный COUNT(*) OVER () материализовал весь UNION на каждой странице.
+        $cntInner = str_replace(
+            ['LEFT(t.content, 4000) AS content', 'LEFT(p.content, 4000) AS content'],
+            ['NULL AS content', 'NULL AS content'],
+            $inner
+        );
+        $cnt = $db->prepare("SELECT COUNT(*) FROM ($cntInner) x");
+        $cnt->execute($params);
+        $total = (int)$cnt->fetchColumn();
+
         $totalPages = max(1, (int)ceil($total / $perPage));
         if ($page > $totalPages) {
-            // Перезапрос корректной страницы
             $page = $totalPages;
             $offset = ($page - 1) * $perPage;
             $st = $db->prepare("
-                SELECT x.*, COUNT(*) OVER () AS full_total
-                FROM ($inner) x
+                SELECT x.* FROM ($inner) x
                 ORDER BY $order
                 LIMIT $perPage OFFSET $offset
             ");
@@ -231,6 +237,8 @@ require_once __DIR__ . '/includes/header.php';
 
 <?php if ($error): ?>
     <div class="alert alert-error"><?= escape($error) ?></div>
+<?php elseif ($notice): ?>
+    <div class="alert alert-info"><?= escape($notice) ?></div>
 <?php endif; ?>
 
 <?php if ($ft === '' && !$error): ?>

@@ -84,7 +84,12 @@ function smtpSend($from, $to, $subject, $body, $headers) {
     if ($secure === 'tls') {
         $st = $cmd('STARTTLS');
         if (!$expect($st, '220', 'STARTTLS')) return false;
-        if (!stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+        // Явная проверка сертификата: AUTH LOGIN (base64) не должен уходить по MITM-каналу.
+        stream_context_set_option($fp, 'ssl', 'verify_peer', true);
+        stream_context_set_option($fp, 'ssl', 'verify_peer_name', true);
+        stream_context_set_option($fp, 'ssl', 'peer_name', $host);
+        stream_context_set_option($fp, 'ssl', 'allow_self_signed', false);
+        if (!stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT | STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT)) {
             error_log('SMTP STARTTLS crypto failed'); fclose($fp); return false;
         }
         $ehlo = $cmd('EHLO localhost');
@@ -107,12 +112,20 @@ function smtpSend($from, $to, $subject, $body, $headers) {
     $dt = $cmd('DATA');
     if (!$expect($dt, '354', 'DATA')) return false;
 
+    // Тело: нормализуем переводы строк в CRLF, затем dot-stuffing по RFC 5321
+    // (каждая строка, начинающаяся с точки, получает вторую точку).
+    $bodyNorm = str_replace(["\r\n", "\r"], "\n", (string)$body);
+    $bodyCrlf = str_replace("\n", "\r\n", $bodyNorm);
+    $bodyStuffed = preg_replace('/^\./m', '..', $bodyCrlf);
+
     $msg = '';
     foreach ($headers as $k => $v) $msg .= "$k: $v\r\n";
     $msg .= 'To: <' . $to . ">\r\n";
     $msg .= 'Subject: ' . mailEncodeHeader($subject) . "\r\n";
-    $msg .= "\r\n" . str_replace("\n.", "\n..", $body) . "\r\n.";
-    $end = $cmd($msg);
+    $msg .= "\r\n" . $bodyStuffed;
+    // Терминатор DATA строго <CRLF>.<CRLF>
+    if (substr($msg, -2) !== "\r\n") $msg .= "\r\n";
+    $end = $cmd($msg . '.');
     $cmd('QUIT');
     fclose($fp);
 

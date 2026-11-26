@@ -51,6 +51,9 @@ function getCurrentUser() {
         session_destroy();
         sessionBoot();
         session_regenerate_id(true);
+        // Новая сессия гарантированно гостевая: isLoggedIn() === false
+        // для всех последующих вызовов в этом запросе.
+        $_SESSION = [];
         setFlashMessage('info', 'Сессия завершена: аккаунт недоступен');
     }
 

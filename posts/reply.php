@@ -12,6 +12,7 @@ if (!isLoggedIn()) {
     setFlashMessage('error', 'Чтобы отвечать в темах, необходимо войти');
     redirect('/auth/login.php');
 }
+enforceActiveUser();
 
 if (setting('forum_closed', false) && !isModerator()) {
     setFlashMessage('error', setting('forum_closed_message', 'Форум временно закрыт для новых сообщений'));
@@ -29,31 +30,6 @@ if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
 
 $db = Database::getInstance()->getConnection();
 $currentUser = getCurrentUser();
-
-$stmt = $db->prepare("
-    SELECT t.id, t.is_closed, t.is_hidden
-    FROM topics t
-    JOIN forums f ON f.id = t.forum_id
-    JOIN categories c ON c.id = f.category_id
-    WHERE t.id = ? AND f.is_active = 1 AND c.is_active = 1
-");
-$stmt->execute([$topicId]);
-$topic = $stmt->fetch();
-
-if (!$topic) {
-    setFlashMessage('error', 'Тема не найдена');
-    redirect('/index.php');
-}
-
-if ($topic['is_hidden']) {
-    setFlashMessage('error', 'Тема недоступна для обсуждения');
-    redirect('/index.php');
-}
-
-if ($topic['is_closed']) {
-    setFlashMessage('error', 'Тема закрыта для новых ответов');
-    redirect($backUrl);
-}
 
 $content = trim($_POST['content'] ?? '');
 
@@ -84,18 +60,52 @@ if ($attachErrors) {
     redirect($backUrl);
 }
 
-// Защита от дублей (двойная отправка / обновление страницы; учитываем и файлы).
-// Хэш живёт в user_sessions.payload; список ограничен 200 темами (FIFO).
+// Атомарный антидубль: уникальный ключ в rate_limits (БД, не сессия).
+// Два параллельных запроса с одинаковым содержимым: второй INSERT отклоняется UNIQUE.
 $hash = md5($content . serialize(array_map(fn($f) => [$f['name'], $f['size']], $attachFiles)));
-if (($_SESSION['last_post_hash'][$topicId] ?? null) === $hash) {
-    setFlashMessage('info', 'Такое сообщение уже отправлено');
-    redirect($backUrl);
+$dupKey = 'u' . (int)$currentUser['id'] . ':' . $topicId . ':' . $hash;
+try {
+    $db->prepare("DELETE FROM post_dedup WHERE dedup_key = ? AND created_at < (NOW() - INTERVAL 1 HOUR)")
+       ->execute([$dupKey]);
+    $db->prepare("INSERT INTO post_dedup (dedup_key) VALUES (?)")->execute([$dupKey]);
+} catch (PDOException $e) {
+    if ($e->getCode() == 23000) {
+        setFlashMessage('info', 'Такое сообщение уже отправлено');
+        redirect($backUrl);
+    }
+    throw $e;
 }
 
 try {
+    // Проверка темы и вставка — под блокировкой строки темы:
+    // модерация не сможет закрыть/скрыть/удалить тему между SELECT и INSERT.
+    $db->beginTransaction();
+    $stmt = $db->prepare("
+        SELECT t.id, t.is_closed, t.is_hidden
+        FROM topics t
+        JOIN forums f ON f.id = t.forum_id
+        JOIN categories c ON c.id = f.category_id
+        WHERE t.id = ? AND f.is_active = 1 AND c.is_active = 1
+        FOR UPDATE
+    ");
+    $stmt->execute([$topicId]);
+    $topic = $stmt->fetch();
+
+    if (!$topic || $topic['is_hidden']) {
+        $db->rollBack();
+        setFlashMessage('error', 'Тема недоступна для обсуждения');
+        redirect('/index.php');
+    }
+    if ($topic['is_closed']) {
+        $db->rollBack();
+        setFlashMessage('error', 'Тема закрыта для новых ответов');
+        redirect($backUrl);
+    }
+
     $stmt = $db->prepare("INSERT INTO posts (topic_id, user_id, content) VALUES (?, ?, ?)");
     $stmt->execute([$topicId, $currentUser['id'], $content]);
     $postId = (int)$db->lastInsertId();
+    $db->commit();
 
     try {
         attachStore($attachFiles, 'post', $postId, (int)$currentUser['id']);
@@ -104,35 +114,28 @@ try {
         setFlashMessage('info', 'Ответ опубликован, но часть вложений не удалось сохранить');
     }
 
-    if (!isset($_SESSION['last_post_hash']) || !is_array($_SESSION['last_post_hash'])) {
-        $_SESSION['last_post_hash'] = [];
-    }
-    $_SESSION['last_post_hash'][$topicId] = $hash;
-    if (count($_SESSION['last_post_hash']) > 200) {
-        $_SESSION['last_post_hash'] = array_slice($_SESSION['last_post_hash'], -200, null, true);
-    }
-
     // Подписка автора ответа на тему + рассылка уведомлений
     subscribeTopic($currentUser['id'], $topicId);
     notifyTopicReply($topicId, $postId, $currentUser['id'], $content);
 
     // Страница, на которой окажется новый ответ: позиция среди видимых постов
-    // (свежий COUNT после вставки; учитываем права стаффа на скрытые посты)
     $perPage = max(1, setting('per_page_posts', 15));
     $staffFlag = isModerator() ? 1 : 0;
     $st = $db->prepare("
-        SELECT COUNT(*) FROM posts
-        WHERE topic_id = ? AND (is_hidden = 0 OR ? = 1)
-          AND (created_at < (SELECT created_at FROM posts WHERE id = ?)
-               OR (created_at = (SELECT created_at FROM posts WHERE id = ?) AND id <= ?))
+        SELECT COUNT(*) FROM posts p
+        JOIN posts np ON np.id = ?
+        WHERE p.topic_id = ? AND (p.is_hidden = 0 OR ? = 1)
+          AND (p.created_at < np.created_at
+               OR (p.created_at = np.created_at AND p.id <= np.id))
     ");
-    $st->execute([$topicId, $staffFlag, $postId, $postId, $postId]);
+    $st->execute([$postId, $topicId, $staffFlag]);
     $pos = max(1, (int)$st->fetchColumn());
     $page = (int)ceil($pos / $perPage);
 
     setFlashMessage('success', 'Ответ опубликован');
     redirect('/topic.php?id=' . $topicId . '&page=' . $page . '#post-' . $postId);
 } catch (PDOException $e) {
+    if ($db->inTransaction()) $db->rollBack();
     error_log("Post create error: " . $e->getMessage());
     setFlashMessage('error', 'Ошибка при отправке сообщения. Попробуйте позже.');
     redirect($backUrl);

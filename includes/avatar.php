@@ -104,23 +104,23 @@ function handleAvatarUpload($file, $userId) {
     $name = 'u' . (int)$userId . '_' . bin2hex(random_bytes(8)) . '.' . $ext;
     $target = $dir . '/' . $name;
 
-    // Сначала перекодируем во временный файл (чистые пиксели, без EXIF),
-    // затем перемещаем. Если GD нет — fallback на исходный файл.
+    // Перекодирование обязательно: исходник может содержать EXIF/GPS.
+    // Без GD загрузку отклоняем (fail-closed), а не сохраняем оригинал.
+    if (!function_exists('imagecreatefromstring')) {
+        return [false, 'Загрузка аватаров временно недоступна (нет GD на сервере)', null];
+    }
     $tmpClean = $dir . '/tmp_' . bin2hex(random_bytes(8));
     $clean = avatarReencode($file['tmp_name'], $mime, $tmpClean);
 
-    if ($clean !== null) {
-        if (!rename($tmpClean, $target)) {
-            @unlink($tmpClean);
-            return [false, 'Не удалось сохранить файл', null];
-        }
-        @unlink($file['tmp_name']);
-    } else {
+    if ($clean === null) {
         @unlink($tmpClean);
-        if (!move_uploaded_file($file['tmp_name'], $target)) {
-            return [false, 'Не удалось сохранить файл', null];
-        }
+        return [false, 'Не удалось обработать изображение. Попробуйте другой файл.', null];
     }
+    if (!rename($tmpClean, $target)) {
+        @unlink($tmpClean);
+        return [false, 'Не удалось сохранить файл', null];
+    }
+    @unlink($file['tmp_name']);
 
     return [true, '', '/assets/uploads/avatars/' . $name];
 }

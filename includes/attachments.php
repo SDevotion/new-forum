@@ -142,6 +142,11 @@ function attachValidate(array &$files, $existingCount = 0) {
             $errors[] = '«' . $label . '»: тип файла запрещён';
             continue;
         }
+        // Текстовые вложения — до 1 МБ: мегабайтные «txt» почти всегда мусор/абьюз
+        if ($mime === 'text/plain' && $f['size'] > 1048576) {
+            $errors[] = '«' . $label . '»: текстовый файл не должен превышать 1 МБ';
+            continue;
+        }
         if (attachIsImageMime($mime) && @getimagesize($f['tmp_name']) === false) {
             $errors[] = '«' . $label . '»: файл не является изображением';
             continue;

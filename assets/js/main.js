@@ -127,7 +127,10 @@ document.addEventListener('DOMContentLoaded', function() {
         const form = document.querySelector('.auth-form')
                   || document.getElementById('topicForm')
                   || document.getElementById('replyForm')
-                  || document.querySelector('form');
+                  || document.getElementById('editForm')
+                  || document.getElementById('passwordForm')
+                  || document.getElementById('profileForm')
+                  || document.querySelector('main form');
         if (form && form.parentNode) {
             form.parentNode.insertBefore(alertDiv, form);
         } else {
@@ -233,10 +236,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
 
-            // Блокировка повторной отправки
+            // Блокировка повторной отправки (серверный антидубль — основная защита)
             const submitBtn = this.querySelector('button[type="submit"]');
             submitBtn.disabled = true;
             submitBtn.textContent = 'Отправка...';
+            setTimeout(() => {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Отправить ответ';
+            }, 8000);
         });
     }
 
@@ -421,6 +428,13 @@ document.addEventListener('DOMContentLoaded', function() {
             const btn = this.querySelector('button[type="submit"]');
             btn.disabled = true;
             btn.textContent = 'Сохранение...';
+            // Если навигация не состоялась (отмена beforeunload, сетевой сбой) —
+            // возвращаем кнопку через страховочный таймер.
+            setTimeout(() => {
+                btn.disabled = false;
+                btn.textContent = 'Сохранить изменения';
+                delete editForm.dataset.submitted;
+            }, 8000);
         });
     }
 
@@ -554,10 +568,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 box.className = 'mention-box';
                 ta.closest('.md-editor').appendChild(box);
             }
-            box.innerHTML = items.map((u, i) =>
-                '<div class="mention-item' + (i === active ? ' active' : '') + '" data-name="' + u.username + '">' +
-                '<img src="' + (u.avatar || '/assets/images/default-avatar.svg') + '" alt="">' + u.username + '</div>'
-            ).join('');
+            box.innerHTML = '';
+            items.forEach((u, i) => {
+                const row = document.createElement('div');
+                row.className = 'mention-item' + (i === active ? ' active' : '');
+                row.dataset.name = u.username;
+                const img = document.createElement('img');
+                img.src = u.avatar || '/assets/images/default-avatar.svg';
+                img.alt = '';
+                row.appendChild(img);
+                row.appendChild(document.createTextNode(u.username));
+                box.appendChild(row);
+            });
             box.querySelectorAll('.mention-item').forEach(el => {
                 el.addEventListener('mousedown', e => { e.preventDefault(); pick(el.dataset.name); });
             });
@@ -685,9 +707,12 @@ document.addEventListener('DOMContentLoaded', function() {
             // поэтому объединяем с уже выбранными (деdup по имени+размеру+дате изменения)
             const merged = new DataTransfer();
             const seen = new Set();
-            const key = f => f.name + '|' + f.size + '|' + f.lastModified;
-            Array.from(prevFiles).concat(Array.from(input.files)).forEach(f => {
-                const k = key(f);
+            // Дедуп только против УЖЕ выбранных ранее файлов, не внутри новой пачки:
+            // два разных файла с совпадающими name/size/mtime — легитимный выбор.
+            prevFiles.forEach(f => seen.add(f.name + '|' + f.size + '|' + f.lastModified));
+            Array.from(prevFiles).forEach(f => merged.items.add(f));
+            Array.from(input.files).forEach(f => {
+                const k = f.name + '|' + f.size + '|' + f.lastModified;
                 if (!seen.has(k)) { seen.add(k); merged.items.add(f); }
             });
             input.files = merged.files;
@@ -722,22 +747,23 @@ document.addEventListener('DOMContentLoaded', function() {
         rootMargin: '0px 0px -50px 0px'
     };
     
-    const observer = new IntersectionObserver(function(entries) {
-        entries.forEach(entry => {
-            if (entry.isIntersecting) {
-                entry.target.style.opacity = '1';
-                entry.target.style.transform = 'translateY(0)';
-            }
+    if ('IntersectionObserver' in window) {
+        const observer = new IntersectionObserver(function(entries) {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.style.opacity = '1';
+                    entry.target.style.transform = 'translateY(0)';
+                }
+            });
+        }, observerOptions);
+
+        document.querySelectorAll('.stat-card').forEach(el => {
+            el.style.opacity = '0';
+            el.style.transform = 'translateY(20px)';
+            el.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+            observer.observe(el);
         });
-    }, observerOptions);
-    
-    const animatedElements = document.querySelectorAll('.stat-card');
-    animatedElements.forEach(el => {
-        el.style.opacity = '0';
-        el.style.transform = 'translateY(20px)';
-        el.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
-        observer.observe(el);
-    });
+    }
 });
 
 // CSS анимация для скрытия алертов
@@ -754,4 +780,5 @@ style.textContent = `
         }
     }
 `;
+if (window.FG_NONCE) style.setAttribute('nonce', window.FG_NONCE);
 document.head.appendChild(style);

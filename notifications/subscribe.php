@@ -22,15 +22,20 @@ if (!topicVisible($topicId)) {
 }
 
 try {
-    $stmt = $db->prepare("SELECT 1 FROM topic_subscriptions WHERE user_id = ? AND topic_id = ?");
-    $stmt->execute([$uid, $topicId]);
+    // Атомарная инверсия одним UPSERT: нет строки -> создаём подписку (1);
+    // есть -> 1 превращается в 0 (явный отказ, автоподписка его больше не вернёт),
+    // 0 превращается в 1. DELETE не используем — состояние "отписан" должно храниться.
+    $db->prepare("
+        INSERT INTO topic_subscriptions (user_id, topic_id, is_subscribed) VALUES (?,?,1)
+        ON DUPLICATE KEY UPDATE is_subscribed = 1 - is_subscribed
+    ")->execute([$uid, $topicId]);
 
-    if ($stmt->fetchColumn()) {
-        $db->prepare("DELETE FROM topic_subscriptions WHERE user_id = ? AND topic_id = ?")->execute([$uid, $topicId]);
-        setFlashMessage('info', 'Подписка на тему отключена');
-    } else {
-        $db->prepare("INSERT IGNORE INTO topic_subscriptions (user_id, topic_id) VALUES (?,?)")->execute([$uid, $topicId]);
+    $stmt = $db->prepare("SELECT is_subscribed FROM topic_subscriptions WHERE user_id = ? AND topic_id = ?");
+    $stmt->execute([$uid, $topicId]);
+    if ((int)$stmt->fetchColumn() === 1) {
         setFlashMessage('success', 'Вы подписались на новые ответы в теме');
+    } else {
+        setFlashMessage('info', 'Подписка на тему отключена');
     }
 } catch (PDOException $e) {
     error_log('Subscribe error: ' . $e->getMessage());

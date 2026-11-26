@@ -41,13 +41,15 @@ header('Cache-Control: private, max-age=3600, must-revalidate');
 header('ETag: ' . $etag);
 header('Last-Modified: ' . gmdate('D, d M Y H:i:s', $mtime) . ' GMT');
 header('Accept-Ranges: bytes');
-if (!$isImage) {
-    header("Content-Security-Policy: sandbox; default-src 'none'");
-}
+// Sandbox для всех типов: polyglot-картинка не сможет выполнить активное содержимое
+header("Content-Security-Policy: sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'");
 
 $ifNoneMatch = $_SERVER['HTTP_IF_NONE_MATCH'] ?? '';
 $ifModifiedSince = $_SERVER['HTTP_IF_MODIFIED_SINCE'] ?? '';
-if (trim($ifNoneMatch) === $etag || ($ifModifiedSince && @strtotime($ifModifiedSince) >= $mtime)) {
+// По RFC 7232: если есть If-None-Match, If-Modified-Since игнорируется
+if ($ifNoneMatch !== '') {
+    if (trim($ifNoneMatch) === $etag) { http_response_code(304); exit; }
+} elseif ($ifModifiedSince && @strtotime($ifModifiedSince) >= $mtime) {
     http_response_code(304);
     exit;
 }

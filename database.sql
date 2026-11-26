@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Хост: localhost
--- Время создания: Ноя 26 2026 г., 18:20
+-- Время создания: Ноя 26 2026 г., 20:35
 -- Версия сервера: 8.4.11-11
 -- Версия PHP: 8.3.37
 
@@ -336,6 +336,7 @@ DELIMITER ;
 CREATE TABLE `topic_subscriptions` (
   `user_id` int NOT NULL,
   `topic_id` int NOT NULL,
+  `is_subscribed` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 

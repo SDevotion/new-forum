@@ -26,20 +26,21 @@ $forumsStmt = $db->prepare("
            END AS visible_posts_count,
            la.last_date,
            la.last_username,
+           la.last_avatar,
            la.last_topic_id,
            la.last_topic_title
     FROM forums f
     LEFT JOIN LATERAL (
-        SELECT x.created_at AS last_date, x.username AS last_username,
+        SELECT x.created_at AS last_date, x.username AS last_username, x.avatar AS last_avatar,
                x.topic_id AS last_topic_id, x.title AS last_topic_title
         FROM (
-            SELECT p.created_at, u.username, t.id AS topic_id, t.title, 1 AS prio
+            SELECT p.created_at, u.username, u.avatar, t.id AS topic_id, t.title, 1 AS prio
             FROM posts p
             JOIN topics t ON t.id = p.topic_id
             JOIN users u ON u.id = p.user_id
             WHERE t.forum_id = f.id AND (p.is_hidden = 0 OR ? = 1) AND (t.is_hidden = 0 OR ? = 1)
             UNION ALL
-            SELECT t.created_at, u.username, t.id, t.title, 2 AS prio
+            SELECT t.created_at, u.username, u.avatar, t.id, t.title, 2 AS prio
             FROM topics t
             JOIN users u ON u.id = t.user_id
             WHERE t.forum_id = f.id AND (t.is_hidden = 0 OR ? = 1)
@@ -121,10 +122,13 @@ ob_start();
                         </div>
                         <div class="forum-last-post">
                             <?php if ($forum['last_topic_id']): ?>
-                                <div class="last-topic-title"><?= escape(mb_strimwidth($forum['last_topic_title'], 0, 32, '…')) ?></div>
-                                <div class="last-topic-meta">
-                                    <?= escape($forum['last_username']) ?>
-                                    · <?= date('d.m.Y H:i', strtotime($forum['last_date'])) ?>
+                                <img src="<?= avatarUrl($forum['last_avatar']) ?>" alt="" class="last-post-avatar">
+                                <div class="last-post-info">
+                                    <div class="last-topic-title"><?= escape(mb_strimwidth($forum['last_topic_title'], 0, 32, '…')) ?></div>
+                                    <div class="last-topic-meta">
+                                        <?= escape($forum['last_username']) ?>
+                                        · <?= date('d.m.Y H:i', strtotime($forum['last_date'])) ?>
+                                    </div>
                                 </div>
                             <?php else: ?>
                                 <span class="no-posts">Нет сообщений</span>

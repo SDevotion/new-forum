@@ -54,6 +54,15 @@ $stmt = $db->prepare("
                 LIMIT 1),
                u.username
            ) AS last_username,
+           COALESCE(
+               (SELECT lu.avatar
+                FROM posts lp
+                JOIN users lu ON lu.id = lp.user_id
+                WHERE lp.topic_id = t.id AND (lp.is_hidden = 0 OR ? = 1)
+                ORDER BY lp.created_at DESC, lp.id DESC
+                LIMIT 1),
+               u.avatar
+           ) AS last_avatar,
            (SELECT COUNT(*) FROM posts vp WHERE vp.topic_id = t.id AND (vp.is_hidden = 0 OR ? = 1)) AS visible_replies
     FROM topics t
     JOIN users u ON u.id = t.user_id
@@ -61,7 +70,7 @@ $stmt = $db->prepare("
     ORDER BY t.is_pinned DESC, t.last_post_at DESC, t.id DESC
     LIMIT $perPage OFFSET $offset
 ");
-$stmt->execute([$staff ? 1 : 0, $staff ? 1 : 0, $forumId, $staff ? 1 : 0]);
+$stmt->execute([$staff ? 1 : 0, $staff ? 1 : 0, $staff ? 1 : 0, $forumId, $staff ? 1 : 0]);
 $topics = $stmt->fetchAll();
 
 require_once __DIR__ . '/includes/header.php';
@@ -125,10 +134,13 @@ require_once __DIR__ . '/includes/header.php';
                 </div>
                 <div class="topic-row-last col-last">
                     <?php if ($t['last_post_at']): ?>
-                        <div><?= date('d.m.Y H:i', strtotime($t['last_post_at'])) ?></div>
-                        <?php if ($t['last_username']): ?>
-                            <div class="last-author"><?= escape($t['last_username']) ?></div>
-                        <?php endif; ?>
+                        <img src="<?= avatarUrl($t['last_avatar']) ?>" alt="" class="last-post-avatar">
+                        <div class="last-post-info">
+                            <div><?= date('d.m.Y H:i', strtotime($t['last_post_at'])) ?></div>
+                            <?php if ($t['last_username']): ?>
+                                <div class="last-author"><?= escape($t['last_username']) ?></div>
+                            <?php endif; ?>
+                        </div>
                     <?php else: ?>
                         —
                     <?php endif; ?>

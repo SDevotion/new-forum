@@ -10,6 +10,7 @@ if (!isLoggedIn()) {
     setFlashMessage('error', 'Для создания темы необходимо войти');
     redirect('/auth/login.php');
 }
+enforceActiveUser();
 
 if (setting('forum_closed', false) && !isModerator()) {
     setFlashMessage('error', setting('forum_closed_message', 'Форум временно закрыт для новых сообщений'));

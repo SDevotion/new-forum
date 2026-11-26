@@ -22,17 +22,11 @@ $mdRequired = !empty($mdRequired) ? 'required' : '';
         <button type="button" class="md-btn" data-action="hr" title="Разделитель">―</button>
     </div>
 
-    <div class="md-tabs">
-        <button type="button" class="md-tab active" data-tab="write">Написание</button>
-        <button type="button" class="md-tab" data-tab="preview">Предпросмотр</button>
-    </div>
-
-    <div class="md-pane active" data-pane="write">
-        <textarea id="<?= escape($mdId) ?>" name="<?= escape($mdName) ?>" class="form-control"
-                  rows="<?= (int)$mdRows ?>" placeholder="Поддерживается Markdown..." <?= $mdRequired ?>><?= escape($mdValue) ?></textarea>
-    </div>
-    <div class="md-pane" data-pane="preview">
-        <div class="md-preview-body post-content"></div>
+    <div class="md-live-wrap">
+        <pre class="md-highlight" aria-hidden="true"></pre>
+        <textarea id="<?= escape($mdId) ?>" name="<?= escape($mdName) ?>" class="form-control md-live-input"
+                  rows="<?= (int)$mdRows ?>" placeholder="Поддерживается Markdown..." <?= $mdRequired ?>
+                  spellcheck="false" wrap="soft"><?= escape($mdValue) ?></textarea>
     </div>
 
     <div class="md-hint">**жирный** · *курсив* · `код` · &gt; цитата · - список · [текст](https://…) · Ctrl+Enter — отправить</div>

@@ -81,7 +81,8 @@ function mdSafeUrl($url) {
 
 function mdRender($text) {
     $text = str_replace(["\r\n", "\r"], "\n", (string)$text);
-    $text = str_replace("\x00", '', $text);
+    // \x00 и \x02 — служебные байты плейсхолдеров; из пользовательского ввода вырезаем оба
+    $text = str_replace(["\x00", "\x02"], '', $text);
     $text = htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
 
     $codeBlocks = [];
@@ -95,6 +96,17 @@ function mdRender($text) {
     $text = preg_replace_callback('/`([^`\n]+)`/', function ($m) use (&$inlineCodes) {
         $inlineCodes[] = '<code class="md-code">' . $m[1] . '</code>';
         return "\x00IC" . (count($inlineCodes) - 1) . "\x00";
+    }, $text);
+
+    // @упоминания — ДО построения HTML: здесь ещё нет тегов, и lookbehind не блокирует
+    // ник после <p>, <br>, <strong>, <li> и т.п. Маркер на \x02 (вырезан из ввода выше),
+    // '/' в lookbehind — чтобы не трогать @ник внутри URL автоссылок.
+    $mentions = [];
+    $text = preg_replace_callback('/(?<![\w>\/])@([a-zA-Z0-9_]{3,50})/', function ($m) use (&$mentions) {
+        $id = mdMentionId($m[1]);
+        if (!$id) return $m[0];
+        $mentions[] = '<a href="/profile.php?id=' . $id . '" class="mention">@' . $m[1] . '</a>';
+        return "\x02MN" . (count($mentions) - 1) . "\x02";
     }, $text);
 
     $text = preg_replace_callback('/\[quote=([^\]\n]{1,60})\](.*?)\[\/quote\]/s', function ($m) {
@@ -184,11 +196,9 @@ function mdRender($text) {
         return '<a href="' . $url . '" class="md-link" target="_blank" rel="nofollow noopener noreferrer">' . $url . '</a>' . $trail;
     }, $html);
 
-    // @упоминания: id берутся из предзагруженного кэша (без запроса на имя)
-    $html = preg_replace_callback('/(?<![\w>])@([a-zA-Z0-9_]{3,50})/', function ($m) {
-        $id = mdMentionId($m[1]);
-        if (!$id) return $m[0];
-        return '<a href="/profile.php?id=' . $id . '" class="mention">@' . $m[1] . '</a>';
+    // Восстановление ссылок-упоминаний из плейсхолдеров
+    $html = preg_replace_callback('/\x02MN(\d+)\x02/', function ($m) use ($mentions) {
+        return $mentions[(int)$m[1]];
     }, $html);
 
     $html = preg_replace_callback('/\x00IC(\d+)\x00/', function ($m) use ($inlineCodes) {

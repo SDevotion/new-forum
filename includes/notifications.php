@@ -217,8 +217,8 @@ function notifyTopicReply($topicId, $postId, $actorId, $content) {
         $notified[] = $ownerId;
     }
 
-    // 3) Подписчики (исключая уже уведомлённых)
-    $st = $db->prepare("SELECT user_id FROM topic_subscriptions WHERE topic_id = ?");
+    // 3) Подписчики (исключая уже уведомлённых и явно отписавшихся)
+    $st = $db->prepare("SELECT user_id FROM topic_subscriptions WHERE topic_id = ? AND is_subscribed = 1");
     $st->execute([$topicId]);
     $subs = array_map('intval', $st->fetchAll(PDO::FETCH_COLUMN));
     $subs = array_values(array_diff($subs, $notified));
@@ -243,7 +243,7 @@ function unreadCount() {
 function isSubscribed($topicId) {
     if (!isLoggedIn()) return false;
     $db = Database::getInstance()->getConnection();
-    $stmt = $db->prepare("SELECT 1 FROM topic_subscriptions WHERE user_id = ? AND topic_id = ?");
+    $stmt = $db->prepare("SELECT 1 FROM topic_subscriptions WHERE user_id = ? AND topic_id = ? AND is_subscribed = 1");
     $stmt->execute([currentUserId(), $topicId]);
     return (bool)$stmt->fetchColumn();
 }

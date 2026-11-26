@@ -15,7 +15,7 @@ $db = Database::getInstance()->getConnection();
 $uid = currentUserId();
 $action = $_POST['action'] ?? '';
 $back = $_POST['back'] ?? '/notifications.php';
-if (!preg_match('~^/[A-Za-z0-9_./?=&#%-]*$~', $back)) $back = '/notifications.php';
+if (!preg_match('~^/(?![/\\\\])[A-Za-z0-9_./?=&#%-]*$~', $back)) $back = '/notifications.php';
 
 try {
     if ($action === 'read_all') {

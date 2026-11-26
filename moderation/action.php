@@ -14,7 +14,7 @@ $action = $_POST['action'] ?? '';
 $reason = trim($_POST['reason'] ?? '');
 $id = (int)($_POST['id'] ?? 0);
 $back = $_POST['back'] ?? '/moderation/index.php';
-if (!preg_match('~^/[A-Za-z0-9_./?=&#%-]*$~', $back)) $back = '/moderation/index.php';
+if (!preg_match('~^/(?![/\\\\])[A-Za-z0-9_./?=&#%-]*$~', $back)) $back = '/moderation/index.php';
 
 function done($msg, $back, $type = 'success') { setFlashMessage($type, $msg); redirect($back); }
 

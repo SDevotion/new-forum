@@ -23,15 +23,15 @@ function canEdit($ownerId, $createdAt, array $flags = []) {
  * Сохранение версии перед правкой.
  * Храним последние 100 версий объекта — защита от разрастания истории.
  */
-function saveRevision($type, $id, $oldTitle, $oldContent, $reason = null) {
+function saveRevision($type, $id, $oldTitle, $oldContent, $reason = null, $hidden = false) {
     $u = getCurrentUser();
     if (!$u) return;
     $db = Database::getInstance()->getConnection();
     $stmt = $db->prepare("
-        INSERT INTO post_edits (target_type, target_id, editor_id, old_title, old_content, reason)
-        VALUES (?,?,?,?,?,?)
+        INSERT INTO post_edits (target_type, target_id, editor_id, old_title, old_content, reason, is_hidden)
+        VALUES (?,?,?,?,?,?,?)
     ");
-    $stmt->execute([$type, $id, $u['id'], $oldTitle, $oldContent, $reason ? mb_substr($reason, 0, 255) : null]);
+    $stmt->execute([$type, $id, $u['id'], $oldTitle, $oldContent, $reason ? mb_substr($reason, 0, 255) : null, $hidden ? 1 : 0]);
 
     // Подчищаем самые старые версии сверх лимита
     $db->prepare("

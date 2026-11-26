@@ -32,7 +32,7 @@ try {
         if (!$cur) { setFlashMessage('error', 'Тема не найдена'); redirect('/index.php'); }
 
         $db->beginTransaction();
-        saveRevision('topic', $id, $cur['title'], $cur['content'], 'Откат к версии #' . $revId);
+        saveRevision('topic', $id, $cur['title'], $cur['content'], 'Откат к версии #' . $revId, true);
         $db->prepare("UPDATE topics SET title = ?, content = ?, edited_at = NOW(), edited_by = ?, edit_count = edit_count + 1 WHERE id = ?")
            ->execute([$rev['old_title'], $rev['old_content'], $me['id'], $id]);
         $db->commit();
@@ -45,7 +45,7 @@ try {
         if (!$cur) { setFlashMessage('error', 'Сообщение не найдено'); redirect('/index.php'); }
 
         $db->beginTransaction();
-        saveRevision('post', $id, null, $cur['content'], 'Откат к версии #' . $revId);
+        saveRevision('post', $id, null, $cur['content'], 'Откат к версии #' . $revId, true);
         $db->prepare("UPDATE posts SET content = ?, updated_at = NOW(), edited_by = ?, edit_count = edit_count + 1 WHERE id = ?")
            ->execute([$rev['old_content'], $me['id'], $id]);
         $db->commit();

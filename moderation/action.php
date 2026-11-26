@@ -35,6 +35,12 @@ try {
             if ($action === 'topic_hide' && $new) {
                 $db->prepare("DELETE FROM notifications WHERE topic_id = ? AND type <> 'moderation'")->execute([$id]);
             }
+            if ($action === 'topic_hide') {
+                $st = $db->prepare("SELECT forum_id FROM topics WHERE id = ?");
+                $st->execute([$id]);
+                $fid = (int)$st->fetchColumn();
+                if ($fid > 0) recountForum($fid);
+            }
             logModeration($action . ($new ? '_on' : '_off'), 'topic', $id, $reason);
 
             $names = ['topic_pin' => 'закреплена', 'topic_close' => 'закрыта', 'topic_hide' => 'скрыта'];
@@ -116,6 +122,14 @@ try {
             if ($new) {
                 $db->prepare("DELETE FROM notifications WHERE post_id = ? AND type <> 'moderation'")->execute([$id]);
             }
+
+            // Скрытие/показ меняет витрину: дата активности темы и last_post_id раздела
+            $st = $db->prepare("SELECT forum_id FROM topics WHERE id = ?");
+            $st->execute([(int)$row['topic_id']]);
+            $forumId = (int)$st->fetchColumn();
+            recountTopic((int)$row['topic_id']);
+            if ($forumId > 0) recountForum($forumId);
+
             logModeration($new ? 'post_hide' : 'post_unhide', 'post', $id, $reason);
 
             if ($new) {

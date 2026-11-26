@@ -45,8 +45,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         case 'clean_ratelimits':
             $n = $db->exec("DELETE FROM rate_limits WHERE created_at < NOW() - INTERVAL 1 DAY");
+            $n += $db->exec("DELETE FROM post_dedup WHERE created_at < NOW() - INTERVAL 1 DAY");
             logModeration('maint_clean', 'forum', 0, "Лимитеры частоты: удалено записей — $n");
-            setFlashMessage('success', "Удалено записей rate_limits: $n");
+            setFlashMessage('success', "Удалено записей rate_limits/post_dedup: $n");
             break;
 
         case 'clean_sessions':

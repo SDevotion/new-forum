@@ -61,7 +61,11 @@ function notifyEmailSend($userId, $type, $actorId, $topicId, $postId, $excerptVa
         if ($topicId) $body .= "Читать: " . topicUrl($topicId, $postId) . "\n\n";
         $body .= "Отключить email-уведомления можно в настройках профиля.\n" . MAIL_FROM_NAME;
 
-        sendMail($u['email'], $kindLabel . ' — ' . MAIL_FROM_NAME, $body);
+        // Внимание: отправленный email неотзываем — при последующем скрытии
+        // контента письмо останется у получателя. Очередь с отложенной отправкой — TODO.
+        if (!sendMail($u['email'], $kindLabel . ' — ' . MAIL_FROM_NAME, $body)) {
+            error_log('Notify email delivery failed for user ' . (int)$userId);
+        }
     } catch (Throwable $e) {
         error_log('Notify email error: ' . $e->getMessage());
     }
@@ -150,11 +154,13 @@ function notifyUsersBatch(array $userIds, $type, $actorId, $topicId, $postId, $e
  * Извлечение имён из @упоминаний и [quote=...].
  */
 function parseMentions($text) {
+    // Код-блоки и inline-код не содержат упоминаний (как и в рендере mdRender)
+    $text = function_exists('mdStripCode') ? mdStripCode($text) : (string)$text;
     $names = [];
-    if (preg_match_all('/\[quote=([^\]\n]{1,60})\]/u', (string)$text, $m)) {
+    if (preg_match_all('/\[quote=([^\]\n]{1,60})\]/u', $text, $m)) {
         foreach ($m[1] as $name) $names[$name] = 'quote';
     }
-    if (preg_match_all('/@([a-zA-Z0-9_]{3,50})/u', (string)$text, $m)) {
+    if (preg_match_all('/@([a-zA-Z0-9_]{3,50})/u', $text, $m)) {
         foreach ($m[1] as $name) $names[$name] = 'mention';
     }
     return $names;

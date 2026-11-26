@@ -53,7 +53,24 @@ $forumsStmt = $db->prepare("
     ORDER BY f.sort_order ASC, f.id ASC
 ");
 
+// Кэш собранной разметки списков для гостей: LATERAL-запрос дорогой,
+// а для не-стаффа результат одинаков. Стафф всегда видит живые данные.
+$indexCacheKey = 'forum_index_html_v1';
+$indexCached = false;
+$indexHtml = '';
+if (!$staffFlag && function_exists('apcu_fetch') && (!function_exists('apcu_enabled') || apcu_enabled())) {
+    $hit = apcu_fetch($indexCacheKey, $ok);
+    if ($ok && is_string($hit)) { $indexHtml = $hit; $indexCached = true; }
+}
+
 require_once __DIR__ . '/includes/header.php';
+
+if ($indexCached) {
+    echo $indexHtml;
+    require_once __DIR__ . '/includes/footer.php';
+    exit;
+}
+ob_start();
 ?>
 
 <div class="page-header">
@@ -120,4 +137,10 @@ require_once __DIR__ . '/includes/header.php';
     <?php endforeach; ?>
 <?php endif; ?>
 
-<?php require_once __DIR__ . '/includes/footer.php'; ?>
+<?php
+$indexHtml = ob_get_flush();
+if (!$staffFlag && function_exists('apcu_store') && (!function_exists('apcu_enabled') || apcu_enabled())) {
+    apcu_store($indexCacheKey, $indexHtml, 30);
+}
+require_once __DIR__ . '/includes/footer.php';
+?>

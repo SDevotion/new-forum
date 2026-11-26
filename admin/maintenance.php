@@ -22,7 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         case 'recount':
             require_once __DIR__ . '/../includes/counters.php';
             recountAll();
-            logModeration('maint_recount', 'forum', 0);
+            logModeration('maint_recount', 'system', 0);
             setFlashMessage('success', 'Счётчики пересчитаны');
             break;
 
@@ -39,38 +39,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 LEFT JOIN posts p  ON r.target_type = 'post'  AND p.id = r.target_id
                 WHERE t.id IS NULL AND p.id IS NULL
             ");
-            logModeration('maint_clean', 'forum', 0, "Записи без целей: правок — $n1, жалоб — $n2");
+            logModeration('maint_clean', 'system', 0, "Записи без целей: правок — $n1, жалоб — $n2");
             setFlashMessage('success', "Удалено записей без целей: правок — $n1, жалоб — $n2");
             break;
 
         case 'clean_ratelimits':
             $n = $db->exec("DELETE FROM rate_limits WHERE created_at < NOW() - INTERVAL 1 DAY");
             $n += $db->exec("DELETE FROM post_dedup WHERE created_at < NOW() - INTERVAL 1 DAY");
-            logModeration('maint_clean', 'forum', 0, "Лимитеры частоты: удалено записей — $n");
+            logModeration('maint_clean', 'system', 0, "Лимитеры частоты: удалено записей — $n");
             setFlashMessage('success', "Удалено записей rate_limits/post_dedup: $n");
             break;
 
         case 'clean_sessions':
             $n = $db->exec("DELETE FROM user_sessions WHERE expires_at < NOW()");
-            logModeration('maint_clean', 'forum', 0, "Сессии: удалено протухших записей — $n");
+            logModeration('maint_clean', 'system', 0, "Сессии: удалено протухших записей — $n");
             setFlashMessage('success', "Удалено протухших сессий: $n");
             break;
 
         case 'clean_resets':
             $n = $db->exec("DELETE FROM password_resets WHERE expires_at < NOW()");
-            logModeration('maint_clean', 'forum', 0, "Токены сброса пароля: удалено протухших — $n");
+            logModeration('maint_clean', 'system', 0, "Токены сброса пароля: удалено протухших — $n");
             setFlashMessage('success', "Удалено протухших токенов сброса пароля: $n");
             break;
 
         case 'clean_searchlog':
             $n = $db->exec("DELETE FROM search_log WHERE created_at < NOW() - INTERVAL 90 DAY");
-            logModeration('maint_clean', 'forum', 0, "Журнал поиска: удалено записей — $n");
+            logModeration('maint_clean', 'system', 0, "Журнал поиска: удалено записей — $n");
             setFlashMessage('success', "Удалено записей search_log: $n");
             break;
 
         case 'clean_notifications':
             $n = $db->exec("DELETE FROM notifications WHERE is_read = 1 AND created_at < NOW() - INTERVAL 30 DAY");
-            logModeration('maint_clean', 'forum', 0, "Прочитанные уведомления: удалено — $n");
+            logModeration('maint_clean', 'system', 0, "Прочитанные уведомления: удалено — $n");
             setFlashMessage('success', "Удалено прочитанных уведомлений: $n");
             break;
 
@@ -87,7 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $bytes += filesize($fp);
                 if (@unlink($fp)) $removed++;
             }
-            logModeration('maint_clean', 'forum', 0, "Вложения без записей: удалено файлов — $removed");
+            logModeration('maint_clean', 'system', 0, "Вложения без записей: удалено файлов — $removed");
             setFlashMessage('success', "Удалено осиротевших вложений: $removed (" . round($bytes / 1048576, 1) . " МБ)" . ($skipped ? ", пропущено свежих: $skipped" : ''));
             break;
 
@@ -107,7 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $bytes += filesize($fp);
                 if (@unlink($fp)) $removed++;
             }
-            logModeration('maint_clean', 'forum', 0, "Аватары без ссылок: удалено файлов — $removed");
+            logModeration('maint_clean', 'system', 0, "Аватары без ссылок: удалено файлов — $removed");
             setFlashMessage('success', "Удалено неиспользуемых аватаров: $removed (" . round($bytes / 1048576, 1) . " МБ)" . ($skipped ? ", пропущено свежих: $skipped" : ''));
             break;
 
@@ -121,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $fAction = trim($_GET['action'] ?? '');
 $fUser   = (int)($_GET['user'] ?? 0);
 $fTarget = $_GET['target'] ?? '';
-if (!in_array($fTarget, ['topic','post','user','forum','category'], true)) $fTarget = '';
+if (!in_array($fTarget, ['topic','post','user','forum','category','system'], true)) $fTarget = '';
 
 $where = []; $params = [];
 if ($fAction !== '') { $where[] = 'l.action = ?'; $params[] = $fAction; }
@@ -151,7 +151,7 @@ $st->execute($params);
 $log = $st->fetchAll();
 
 $actionNames = moderationActionNames();
-$targetNames = ['topic' => 'Тема', 'post' => 'Сообщение', 'user' => 'Пользователь', 'forum' => 'Раздел', 'category' => 'Категория'];
+$targetNames = ['topic' => 'Тема', 'post' => 'Сообщение', 'user' => 'Пользователь', 'forum' => 'Раздел', 'category' => 'Категория', 'system' => 'Система'];
 
 // Список действий для фильтра — из реальных записей
 $usedActions = $db->query("SELECT DISTINCT action FROM moderation_log ORDER BY action")->fetchAll(PDO::FETCH_COLUMN);
@@ -224,7 +224,7 @@ adminOpen('maintenance');
     </div>
     <div class="admin-card">
         <h3>Осиротевшие файлы</h3>
-        <p class="admin-muted">Файлы на диске, на которые нет ссылок в БД (после сбоев загрузки или ручных удалений). Файлы моложе 1 часа не удаляются — защита от гонок с текущими загрузками.</p>
+        <p class="admin-muted">Файлы на диске без ссылок в БД: сбои загрузки, ручные удаления, удаление пользователей (FK-каскад стирает записи attachments, файлы остаются). Файлы моложе 1 часа не удаляются — защита от гонок с текущими загрузками.</p>
         <form method="POST" class="inline-form js-confirm-maint">
             <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
             <input type="hidden" name="op" value="orphan_attachments">
@@ -272,7 +272,7 @@ adminOpen('maintenance');
                     <span class="admin-log-date"><?= date('d.m.Y H:i', strtotime($l['created_at'])) ?></span>
                     <strong><?= escape($l['username']) ?></strong>
                     — <?= escape($actionNames[$l['action']] ?? $l['action']) ?>
-                    · <?= escape($targetNames[$l['target_type']] ?? $l['target_type']) ?> #<?= (int)$l['target_id'] ?>
+                    · <?= escape($targetNames[$l['target_type']] ?? $l['target_type']) ?><?= $l['target_type'] !== 'system' ? ' #' . (int)$l['target_id'] : '' ?>
                     <?php $r = moderationReasonLabel($l['reason']); ?>
                     <?= $r !== '' ? '· ' . escape($r) : '' ?>
                 </li>

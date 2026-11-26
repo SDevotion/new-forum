@@ -62,11 +62,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $kv['attach_types'] = array_values(array_intersect($allowedGroups, $picked));
         }
         $keys = array_keys(array_filter(settingsDefaults(), fn($d) => $d[2] === $tab && $d[0] === 'int'));
+        $clamped = [];
         foreach ($keys as $key) {
             if (!isset($_POST[$key])) continue;
             $val = (int)$_POST[$key];
             [$min, $max] = $ranges[$key];
-            $kv[$key] = max($min, min($max, $val));
+            $fixed = max($min, min($max, $val));
+            if ($fixed !== $val) $clamped[] = $key . ' → ' . $fixed . ' (допустимо ' . $min . '–' . $max . ')';
+            $kv[$key] = $fixed;
         }
         // Согласованность пар min/max
         if (isset($kv['title_min'], $kv['title_max']) && $kv['title_min'] > $kv['title_max']) $kv['title_min'] = $kv['title_max'];
@@ -75,13 +78,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     $changed = settingsSet($kv);
+    $clampNote = !empty($clamped) ? ' Значения вне диапазона скорректированы: ' . implode('; ', $clamped) . '.' : '';
     if ($changed) {
         $labelsMap = settingLabels();
         $changedLabels = array_map(fn($k) => $labelsMap[$k] ?? $k, $changed);
-        logModeration('settings_update', 'forum', 0, implode(', ', $changedLabels));
-        setFlashMessage('success', 'Настройки сохранены');
+        logModeration('settings_update', 'system', 0, implode(', ', $changedLabels));
+        setFlashMessage($clamped ? 'info' : 'success', 'Настройки сохранены.' . $clampNote);
     } else {
-        setFlashMessage('info', 'Изменений нет');
+        setFlashMessage('info', 'Изменений нет.' . $clampNote);
     }
     redirect('/admin/settings.php?tab=' . $tab);
 }

@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Хост: localhost
--- Время создания: Ноя 26 2026 г., 15:23
+-- Время создания: Ноя 26 2026 г., 18:20
 -- Версия сервера: 8.4.11-11
 -- Версия PHP: 8.3.37
 
@@ -99,7 +99,7 @@ CREATE TABLE `moderation_log` (
   `id` int NOT NULL,
   `user_id` int NOT NULL,
   `action` varchar(50) NOT NULL,
-  `target_type` enum('topic','post','user','forum','category') NOT NULL,
+  `target_type` enum('topic','post','user','forum','category','system') NOT NULL,
   `target_id` int NOT NULL,
   `reason` varchar(255) DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP

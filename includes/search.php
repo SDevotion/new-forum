@@ -2,14 +2,18 @@
 require_once __DIR__ . '/functions.php';
 
 /**
- * Подготовка запроса для FULLTEXT в boolean mode.
- * Слова требуем обязательно (+), фразы в кавычках ищем целиком.
+ * Подготовка запроса для FULLTEXT в boolean mode (ngram).
+ * Все слова ищем фразами: с ngram_token_size=2 одиночный токен '+ab'
+ * матчит любые вхождения биграммы, фраза '"ab"' — точнее.
+ * Односимвольные слова короче ngram-токена найти нельзя — они отбрасываются,
+ * о чём вызывающий код сообщает пользователю (см. ftQueryDropped).
  */
 function ftQuery($q) {
     $q = trim(preg_replace('/\s+/u', ' ', (string)$q));
     if ($q === '') return '';
 
     $parts = [];
+    $GLOBALS['__ft_dropped_short'] = false;
 
     // Фразы в кавычках
     if (preg_match_all('/"([^"]{1,100})"/u', $q, $m)) {
@@ -23,17 +27,20 @@ function ftQuery($q) {
 
     foreach (preg_split('/\s+/u', trim($q)) as $word) {
         $clean = preg_replace('/[^\p{L}\p{N}]/u', '', $word);
-        if (mb_strlen($clean) < 2) continue;
-
-        // С ngram усечение (*) работает некорректно — длинные слова ищем как фразу
-        if (mb_strlen($clean) >= 3) {
-            $parts[] = '+"' . $clean . '"';
-        } else {
-            $parts[] = '+' . $clean;
-        }
+        if ($clean === '') continue;
+        if (mb_strlen($clean) < 2) { $GLOBALS['__ft_dropped_short'] = true; continue; }
+        // Фразовый поиск для всех слов: устойчивее к границам ngram-токенов
+        $parts[] = '+"' . $clean . '"';
     }
 
     return implode(' ', $parts);
+}
+
+/**
+ * Были ли отброшены слишком короткие слова (для подсказки пользователю).
+ */
+function ftQueryDroppedShort() {
+    return !empty($GLOBALS['__ft_dropped_short']);
 }
 
 /**

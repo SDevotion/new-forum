@@ -55,7 +55,8 @@ function getOnlineList() {
                       AND expires_at <= NOW() + INTERVAL ? SECOND
                       AND expires_at >= NOW() + INTERVAL ? SECOND
                 ");
-                $stmt->execute([SESSION_LIFETIME, SESSION_LIFETIME - $w]);
+                $gl = defined('GUEST_SESSION_LIFETIME') ? GUEST_SESSION_LIFETIME : SESSION_LIFETIME;
+                $stmt->execute([$gl, $gl - $w]);
                 $guestCount = (int)$stmt->fetchColumn();
                 if ($apcu) apcu_store('forum_guest_count', $guestCount, 30);
             } catch (PDOException $e) {
@@ -89,7 +90,7 @@ function getForumTotals() {
         'newest' => $db->query("SELECT id, username FROM users WHERE is_active = 1 ORDER BY id DESC LIMIT 1")->fetch(),
         'today_posts'  => (int)$db->query("SELECT COUNT(*) FROM posts WHERE is_hidden = 0 AND created_at >= CURDATE()")->fetchColumn(),
         'today_topics' => (int)$db->query("SELECT COUNT(*) FROM topics WHERE is_hidden = 0 AND created_at >= CURDATE()")->fetchColumn(),
-        'today_users'  => (int)$db->query("SELECT COUNT(*) FROM users WHERE created_at >= CURDATE()")->fetchColumn(),
+        'today_users'  => (int)$db->query("SELECT COUNT(*) FROM users WHERE is_active = 1 AND created_at >= CURDATE()")->fetchColumn(),
     ];
 
     if ($apcu) apcu_store('forum_totals', $data, 60);

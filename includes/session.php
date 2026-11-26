@@ -9,6 +9,7 @@ require_once __DIR__ . '/../config/database.php';
 
 if (!defined('SESSION_NAME'))     define('SESSION_NAME', 'FORUMSESSID');
 if (!defined('SESSION_LIFETIME')) define('SESSION_LIFETIME', 30 * 86400);
+if (!defined('GUEST_SESSION_LIFETIME')) define('GUEST_SESSION_LIFETIME', 6 * 3600);
 if (!defined('SESSION_REFRESH_INTERVAL')) define('SESSION_REFRESH_INTERVAL', 300);
 
 class DbSessionHandler implements SessionHandlerInterface {
@@ -120,6 +121,8 @@ class DbSessionHandler implements SessionHandlerInterface {
 
             $ip = $_SERVER['REMOTE_ADDR'] ?? null;
             $ua = mb_substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 1000);
+            // Гостям — короткий TTL: краулеры без cookie-jar плодят сессии на каждый хит
+            $lifetime = $uid > 0 ? SESSION_LIFETIME : GUEST_SESSION_LIFETIME;
 
             if ($this->exists && !$changed && $stale) {
                 $stmt = $this->db->prepare(
@@ -127,12 +130,12 @@ class DbSessionHandler implements SessionHandlerInterface {
                      WHERE session_token = ?"
                 );
                 try {
-                    $ok = $stmt->execute([SESSION_LIFETIME, $id]);
+                    $ok = $stmt->execute([$lifetime, $id]);
                 } catch (PDOException $e) {
                     $stmt = $this->db->prepare(
                         "UPDATE user_sessions SET expires_at = NOW() + INTERVAL ? SECOND WHERE session_token = ?"
                     );
-                    $ok = $stmt->execute([SESSION_LIFETIME, $id]);
+                    $ok = $stmt->execute([$lifetime, $id]);
                 }
             } else {
                 $stmt = $this->db->prepare("
@@ -147,7 +150,7 @@ class DbSessionHandler implements SessionHandlerInterface {
                         updated_ts = NOW()
                 ");
                 try {
-                    $ok = $stmt->execute([$uid, $id, $ip, $ua, $data, SESSION_LIFETIME]);
+                    $ok = $stmt->execute([$uid, $id, $ip, $ua, $data, $lifetime]);
                 } catch (PDOException $e) {
                     $stmt = $this->db->prepare("
                         INSERT INTO user_sessions (user_id, session_token, ip_address, user_agent, payload, expires_at)
@@ -159,7 +162,7 @@ class DbSessionHandler implements SessionHandlerInterface {
                             payload = VALUES(payload),
                             expires_at = VALUES(expires_at)
                     ");
-                    $ok = $stmt->execute([$uid, $id, $ip, $ua, $data, SESSION_LIFETIME]);
+                    $ok = $stmt->execute([$uid, $id, $ip, $ua, $data, $lifetime]);
                 }
             }
 

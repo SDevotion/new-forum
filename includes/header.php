@@ -6,12 +6,6 @@ require_once __DIR__ . '/stats.php';
 require_once __DIR__ . '/notifications.php';
 $currentUser = getCurrentUser();
 
-// Забаненный/удалённый аккаунт: getCurrentUser вернул null и погасил сессию —
-// отправляем на главную, чтобы flash показался (раньше это делал сам геттер).
-if (isLoggedIn() === false && isset($_SESSION['flash_message']) && !empty($_COOKIE[session_name()]) === false) {
-    // no-op: обычная гостевая страница
-}
-
 // Онлайн-трекинг
 touchActivity();
 trackGuest();
@@ -20,7 +14,9 @@ $flashMessage = getFlashMessage();
 // CSP: свой origin + data:-картинки; инлайн-скрипт конфигурации — по nonce.
 $cspNonce = base64_encode(random_bytes(16));
 if (!headers_sent()) {
-    header("Content-Security-Policy: default-src 'self'; img-src 'self' data:; script-src 'self' 'nonce-" . $cspNonce . "'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'");
+    // style-src-elem: только свои файлы + nonce (инлайн <style> из JS получает nonce).
+    // style-src-attr: инлайн-атрибуты style="" в шаблонах (динамические ширины графиков).
+    header("Content-Security-Policy: default-src 'self'; img-src 'self' data:; script-src 'self' 'nonce-" . $cspNonce . "'; style-src 'self' 'unsafe-inline'; style-src-elem 'self' 'nonce-" . $cspNonce . "'; style-src-attr 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'");
 }
 ?>
 <!DOCTYPE html>
@@ -31,6 +27,7 @@ if (!headers_sent()) {
     <title><?= isset($pageTitle) ? escape($pageTitle) . ' - ' : '' ?>Форум</title>
     <link rel="stylesheet" href="/assets/css/style.css?v=<?= @filemtime(__DIR__ . '/../assets/css/style.css') ?: 1 ?>">
     <script nonce="<?= $cspNonce ?>">
+    window.FG_NONCE = <?= json_encode($cspNonce) ?>;
     window.FG_CONFIG = <?= json_encode([
         'titleMin'    => setting('title_min', 5),
         'titleMax'    => setting('title_max', 200),

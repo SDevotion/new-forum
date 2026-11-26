@@ -1067,7 +1067,8 @@ textarea.form-control {
         gap: 16px;
     }
 
-    .topic-row-last { text-align: left; }
+    .topic-row-last { text-align: left; justify-content: flex-start; }
+    .topic-row-last .last-post-avatar { order: 0; }
 
     .post-card { grid-template-columns: 1fr; }
 
@@ -1238,6 +1239,29 @@ textarea.form-control {
 .reply-notice a:hover { text-decoration: underline; }
 
 /* Последнее сообщение в списке разделов */
+.forum-last-post,
+.topic-row-last {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.last-post-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid var(--color-blue-200);
+    flex-shrink: 0;
+    order: 2;
+}
+
+.last-post-info {
+    min-width: 0;
+    order: 1;
+}
+
 .last-topic-title {
     font-weight: 600;
     color: var(--color-gray-700);
@@ -1724,12 +1748,41 @@ select.form-control{cursor:pointer}
 .md-btn{min-width:32px;height:30px;padding:0 8px;border:1px solid var(--color-gray-200);background:#fff;border-radius:var(--radius-sm);cursor:pointer;font-size:13px;color:var(--color-gray-600);transition:var(--transition);font-family:inherit}
 .md-btn:hover{background:var(--color-blue-50);border-color:var(--color-blue-300);color:var(--color-blue-600)}
 .md-sep{width:1px;background:var(--color-gray-200);margin:2px 4px}
-.md-tabs{display:flex;border-bottom:1px solid var(--color-gray-200);background:#fff}
-.md-tab{padding:8px 18px;border:none;background:none;cursor:pointer;font-size:13px;font-weight:600;color:var(--color-gray-500);border-bottom:2px solid transparent;font-family:inherit;transition:var(--transition)}
-.md-tab.active{color:var(--color-blue-600);border-bottom-color:var(--color-blue-600)}
-.md-pane{display:none}
-.md-pane.active{display:block}
-.md-editor textarea.form-control{border:none;border-radius:0;box-shadow:none!important;display:block}
+/* Live-редактор: прозрачный textarea поверх подсвеченного слоя.
+   Метрики ОБОИХ слоёв обязаны совпадать символ-в-символ. */
+.md-live-wrap{position:relative;background:#fff}
+.md-highlight,
+.md-editor textarea.md-live-input{
+    margin:0;border:none;border-radius:0;padding:12px 16px;
+    font-family:'SF Mono',Consolas,Monaco,'Courier New',monospace;
+    font-size:14px;line-height:1.6;letter-spacing:normal;tab-size:2;
+    white-space:pre-wrap;overflow-wrap:break-word;word-break:normal;
+    min-height:160px;width:100%;box-sizing:border-box;
+}
+.md-highlight{
+    position:absolute;inset:0;overflow:hidden;pointer-events:none;
+    color:var(--color-gray-800);background:transparent;
+}
+.md-editor textarea.md-live-input{
+    position:relative;display:block;background:transparent;
+    color:transparent;caret-color:var(--color-gray-900);
+    box-shadow:none!important;resize:vertical;overflow:auto;
+}
+.md-editor textarea.md-live-input::placeholder{color:var(--color-gray-400)}
+.md-editor textarea.md-live-input::selection{background:rgba(37,99,235,.25);color:transparent}
+/* Подсветка: только цвет/фон/начертание, БЕЗ изменения размера шрифта (метрика!) */
+.hl-mk{color:var(--color-gray-300)}
+.hl-bold{font-weight:700;color:var(--color-gray-900)}
+.hl-em{font-style:italic;color:var(--color-gray-800)}
+.hl-del{text-decoration:line-through;color:var(--color-gray-400)}
+.hl-code{background:var(--color-gray-100);color:var(--color-blue-700);border-radius:3px}
+.hl-fence{color:var(--color-gray-400)}
+.hl-block{background:var(--color-gray-100);color:var(--color-gray-700);display:inline-block;width:100%}
+.hl-head{font-weight:700;color:var(--color-blue-700)}
+.hl-quote{color:var(--color-gray-500);font-style:italic}
+.hl-at{background:var(--color-blue-100);color:var(--color-blue-700);border-radius:3px;font-weight:600}
+.hl-link{color:var(--color-blue-600);text-decoration:underline}
+.hl-url{color:var(--color-gray-400)}
 .md-preview-body{padding:16px;min-height:160px;line-height:1.7;color:var(--color-gray-800)}
 .md-empty{color:var(--color-gray-400)}
 .md-hint{padding:6px 12px;background:var(--color-gray-50);border-top:1px solid var(--color-gray-100);font-size:12px;color:var(--color-gray-400)}

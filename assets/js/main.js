@@ -445,60 +445,74 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    // ===== Markdown-редактор =====
+    // ===== Markdown-редактор: live-подсветка прямо в поле ввода (overlay) =====
+    // Текст остаётся Markdown, но форматируется мгновенно при вводе:
+    // **жирный** виден жирным, заголовки/код/цитаты/@ники подсвечены в самой строке.
+    const mdEscape = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+    // Единый проход по ПЛОСКОМУ тексту: альтернативы потребляют маркеры целиком,
+    // повторных замен поверх HTML нет — перекрёстные/непарные span невозможны.
+    // Границы как в серверном mdRender: контент не начинается/не кончается пробелом,
+    // opening '*' не прилипает к слову слева. Незавершённое "*курсив *" — обычный текст.
+    // Контент bold допускает одиночные '*' (вложенный курсив), но не '**' —
+    // соседние **a** и **b** не склеиваются. Совпадает с серверным mdRender.
+    const MD_INLINE_RE = new RegExp([
+        '(`[^`\\n]+`)',                                                        // 1: inline-код
+        '(^|[^*\\w])(\\*\\*)(\\S(?:(?:[^*\\n]|\\*(?!\\*))*\\S)?)\\*\\*(?!\\*)', // 2,3,4: bold
+        '(^|[^*\\w])(\\*)(\\S(?:[^*\\n]*\\S)?)\\*(?!\\*)',                     // 5,6,7: italic
+        '(~~)(\\S(?:[^~\\n]*\\S)?)~~',                                         // 8,9: strike
+        '\\[([^\\]\\n]{1,200})\\]\\((https?://[^\\s)]{1,500})\\)',              // 10,11: ссылка
+        '(^|[^\\w>/])(@[a-zA-Z0-9_]{3,50})'                                    // 12,13: @ник
+    ].join('|'), 'g');
+
+    const mdInline = (esc, depth) => {
+        depth = depth || 0;
+        if (depth > 4) return esc; // страховка от глубокой вложенности
+        return esc.replace(MD_INLINE_RE, function(m, code, bPre, bMk, bTxt, iPre, iMk, iTxt, sMk, sTxt, lTxt, lUrl, aPre, aTxt) {
+            if (code !== undefined) return '<span class="hl-code">' + code + '</span>';
+            if (bMk !== undefined) return bPre + '<span class="hl-bold"><span class="hl-mk">' + bMk + '</span>' + mdInline(bTxt, depth + 1) + '<span class="hl-mk">' + bMk + '</span></span>';
+            if (iMk !== undefined) return iPre + '<span class="hl-em"><span class="hl-mk">' + iMk + '</span>' + iTxt + '<span class="hl-mk">' + iMk + '</span></span>';
+            if (sMk !== undefined) return '<span class="hl-del"><span class="hl-mk">' + sMk + '</span>' + sTxt + '<span class="hl-mk">' + sMk + '</span></span>';
+            if (lTxt !== undefined) return '<span class="hl-mk">[</span><span class="hl-link">' + lTxt + '</span><span class="hl-mk">](</span><span class="hl-url">' + lUrl + '</span><span class="hl-mk">)</span>';
+            return aPre + '<span class="hl-at">' + aTxt + '</span>';
+        });
+    };
+
+    const mdHighlight = src => {
+        let inCode = false;
+        return src.split('\n').map(line => {
+            const esc = mdEscape(line);
+            if (/^\s*```/.test(line)) {
+                inCode = !inCode;
+                return '<span class="hl-fence">' + esc + '</span>';
+            }
+            if (inCode) return '<span class="hl-block">' + esc + '</span>';
+            let m = line.match(/^(#{1,4})(\s+)(.*)$/);
+            if (m) return '<span class="hl-head"><span class="hl-mk">'+m[1]+'</span>'+m[2]+mdInline(mdEscape(m[3]))+'</span>';
+            m = esc.match(/^(&gt;)(\s?)(.*)$/);
+            if (m) return '<span class="hl-quote"><span class="hl-mk">'+m[1]+'</span>'+m[2]+mdInline(m[3])+'</span>';
+            m = line.match(/^(\s*)([-*+]|\d+[.)])(\s+)(.*)$/);
+            if (m) return m[1]+'<span class="hl-mk">'+mdEscape(m[2])+'</span>'+m[3]+mdInline(mdEscape(m[4]));
+            return mdInline(esc);
+        }).join('\n');
+    };
+
     document.querySelectorAll('.md-editor').forEach(wrap => {
         const ta = wrap.querySelector('textarea');
-        const preview = wrap.querySelector('.md-preview-body');
-        const tabs = wrap.querySelectorAll('.md-tab');
-        const panes = wrap.querySelectorAll('.md-pane');
-        const previewPane = wrap.querySelector('.md-pane[data-pane="preview"]');
+        const hl = wrap.querySelector('.md-highlight');
 
-        const csrf = wrap.dataset.csrf || '';
-        let previewTimer = null;
-        let previewSeq = 0;
-
-        const renderPreview = () => {
-            const text = ta.value;
-            if (!text.trim()) {
-                preview.innerHTML = '<p class="md-empty">Нечего показывать</p>';
-                return;
-            }
-            const seq = ++previewSeq;
-            preview.innerHTML = '<p class="md-empty">Рендер…</p>';
-            fetch('/api/preview.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: text, csrf_token: csrf })
-            })
-            .then(r => r.ok ? r.json() : Promise.reject())
-            .then(data => {
-                if (seq !== previewSeq) return; // устаревший ответ
-                preview.innerHTML = data.html || '<p class="md-empty">Нечего показывать</p>';
-            })
-            .catch(() => {
-                if (seq !== previewSeq) return;
-                preview.innerHTML = '<p class="md-empty">Не удалось получить предпросмотр</p>';
-            });
+        const paint = () => {
+            // завершающий \n нужен, чтобы последняя пустая строка совпадала по высоте
+            hl.innerHTML = mdHighlight(ta.value) + '\n';
+            hl.scrollTop = ta.scrollTop;
+            hl.scrollLeft = ta.scrollLeft;
         };
-
-        const schedulePreview = () => {
-            clearTimeout(previewTimer);
-            previewTimer = setTimeout(renderPreview, 350);
-        };
-
-        ta.addEventListener('input', () => {
-            if (previewPane.classList.contains('active')) schedulePreview();
+        ta.addEventListener('input', paint);
+        ta.addEventListener('scroll', () => {
+            hl.scrollTop = ta.scrollTop;
+            hl.scrollLeft = ta.scrollLeft;
         });
-
-        tabs.forEach(tab => {
-            tab.addEventListener('click', () => {
-                tabs.forEach(t => t.classList.remove('active'));
-                panes.forEach(p => p.classList.remove('active'));
-                tab.classList.add('active');
-                wrap.querySelector('.md-pane[data-pane="'+tab.dataset.tab+'"]').classList.add('active');
-                if (tab.dataset.tab === 'preview') renderPreview();
-            });
-        });
+        paint();
 
         const surround = (before, after, placeholder) => {
             const s = ta.selectionStart, e = ta.selectionEnd;

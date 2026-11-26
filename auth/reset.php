@@ -31,7 +31,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors[] = 'Ссылка недействительна или истекла. Запросите восстановление заново.';
     } elseif (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
         $errors[] = 'Недействительный запрос. Обновите страницу.';
-    } elseif (!rateLimitCheck('reset', 5, 900, true)) {
+    } elseif (!rateLimitCheck('reset', 30, 900, true)) {
         $errors[] = 'Слишком много попыток. Подождите 15 минут.';
     } else {
         $new = $_POST['new_password'] ?? '';

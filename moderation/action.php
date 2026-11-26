@@ -144,7 +144,7 @@ try {
         case 'report_resolve':
         case 'report_reject': {
             $status = $action === 'report_resolve' ? 'resolved' : 'rejected';
-            $stmt = $db->prepare("SELECT target_type, target_id FROM reports WHERE id = ?");
+            $stmt = $db->prepare("SELECT target_type, target_id, user_id FROM reports WHERE id = ?");
             $stmt->execute([$id]);
             $r = $stmt->fetch();
 
@@ -156,11 +156,11 @@ try {
             }
             logModeration($action, $r['target_type'], (int)$r['target_id'], $reason);
 
-            // Уведомляем автора жалобы о результате
-            $st = $db->prepare("SELECT user_id FROM reports WHERE id = ?");
-            $st->execute([$id]);
-            $reporterId = (int)$st->fetchColumn();
-            if ($reporterId > 0) {
+            // Уведомляем автора жалобы (id из первого SELECT). Идемпотентность обеспечивает
+            // условный UPDATE status='new' выше: повторная обработка не дойдёт до этой точки.
+            // NB: uniq_event не защищает NULL-post/topic строки — не полагаемся на него здесь.
+            $reporterId = (int)$r['user_id'];
+            if ($reporterId > 0 && $stmt->rowCount() > 0) {
                 $resultText = $status === 'resolved'
                     ? 'Ваша жалоба рассмотрена и принята. Спасибо за помощь в модерации.'
                     : 'Ваша жалоба рассмотрена и отклонена: нарушений не обнаружено.';

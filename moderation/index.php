@@ -183,7 +183,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <td class="nowrap"><?= date('d.m.Y H:i', strtotime($l['created_at'])) ?></td>
                     <td><a href="/profile.php?id=<?= (int)$l['user_id'] ?>"><?= escape($l['username']) ?></a></td>
                     <td><?= escape($actionNames[$l['action']] ?? $l['action']) ?></td>
-                    <td><?= escape($l['target_type']) ?> #<?= (int)$l['target_id'] ?></td>
+                    <td><?= escape($l['target_type']) ?><?= $l['target_type'] !== 'system' ? ' #' . (int)$l['target_id'] : '' ?></td>
                     <td class="muted"><?= escape(moderationReasonLabel($l['reason']) ?: '—') ?></td>
                 </tr>
             <?php endforeach; ?>

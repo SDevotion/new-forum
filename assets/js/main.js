@@ -141,6 +141,165 @@ document.addEventListener('DOMContentLoaded', function() {
         alertDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
     
+    // ===== EasyMDE (локальный вендор assets/vendor/easymde) =====
+    const mdeInstances = new Map(); // textarea -> EasyMDE
+
+    // Синхронизация CodeMirror -> DOM-textarea + событие input:
+    // счётчики, валидация и beforeunload ниже работают без изменений.
+    function syncTextarea(mde) {
+        const ta = mde.element;
+        const v = mde.value();
+        if (ta.value !== v) {
+            ta.value = v;
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+    }
+
+    // Серверный предпросмотр: тот же mdRender(), что и при показе поста.
+    // Возврат undefined -> EasyMDE не перезаписывает innerHTML сам (async-режим).
+    function makePreviewRender(csrf) {
+        let seq = 0, timer = null;
+        return function (plainText, previewEl) {
+            const my = ++seq;
+            clearTimeout(timer);
+            timer = setTimeout(async () => {
+                try {
+                    const res = await fetch('/api/preview.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ csrf_token: csrf, text: plainText })
+                    });
+                    if (!res.ok) throw new Error(res.status);
+                    const data = await res.json();
+                    if (my === seq) previewEl.innerHTML = data.html || '<span class="md-empty">Пусто</span>';
+                } catch (e) {
+                    if (my === seq) previewEl.innerHTML = '<span class="md-empty">Предпросмотр недоступен</span>';
+                }
+            }, 350); // debounce под rate-limit эндпоинта (60/мин)
+            return undefined;
+        };
+    }
+
+    document.querySelectorAll('.md-editor').forEach(wrap => {
+        const ta = wrap.querySelector('textarea');
+        if (!ta || typeof EasyMDE === 'undefined') return; // деградация до обычной textarea
+
+        const rows = parseInt(ta.rows, 10) || 8;
+        const autosaveId = ta.dataset.autosaveId;
+
+        const mde = new EasyMDE({
+            element: ta,
+            autoDownloadFontAwesome: false, // иначе тянет CDN и ломает CSP
+            spellChecker: false,            // иначе тянет словари с CDN
+            status: ['autosave', 'lines', 'words', 'cursor'],
+            minHeight: Math.max(120, rows * 24) + 'px',
+            autosave: autosaveId
+                ? { enabled: true, uniqueId: 'fg-' + autosaveId, delay: 5000, text: 'Черновик сохранён: ' }
+                : { enabled: false },
+            previewRender: makePreviewRender(wrap.dataset.csrf),
+            // Текстовые кнопки вместо Font Awesome — стиль прежнего тулбара
+            toolbar: [
+                { name: 'bold', action: EasyMDE.toggleBold, className: 'md-fmt md-fmt-b', text: 'B', title: 'Жирный (Ctrl+B)' },
+                { name: 'italic', action: EasyMDE.toggleItalic, className: 'md-fmt md-fmt-i', text: 'I', title: 'Курсив (Ctrl+I)' },
+                { name: 'strikethrough', action: EasyMDE.toggleStrikethrough, className: 'md-fmt md-fmt-s', text: 'S', title: 'Зачёркнутый' },
+                '|',
+                { name: 'heading', action: EasyMDE.toggleHeadingSmaller, className: 'md-fmt', text: 'H', title: 'Заголовок' },
+                { name: 'quote', action: EasyMDE.toggleBlockquote, className: 'md-fmt', text: '❝', title: 'Цитата' },
+                { name: 'unordered-list', action: EasyMDE.toggleUnorderedList, className: 'md-fmt', text: '• —', title: 'Список' },
+                { name: 'ordered-list', action: EasyMDE.toggleOrderedList, className: 'md-fmt', text: '1.', title: 'Нумерованный список' },
+                '|',
+                { name: 'code', action: EasyMDE.toggleCodeBlock, className: 'md-fmt', text: '{ }', title: 'Блок кода' },
+                { name: 'link', action: EasyMDE.drawLink, className: 'md-fmt', text: '🔗', title: 'Ссылка (Ctrl+K)' },
+                { name: 'horizontal-rule', action: EasyMDE.drawHorizontalRule, className: 'md-fmt', text: '―', title: 'Разделитель' },
+                '|',
+                { name: 'preview', action: EasyMDE.togglePreview, className: 'md-fmt no-disable', text: '👁', title: 'Предпросмотр' },
+                { name: 'side-by-side', action: EasyMDE.toggleSideBySide, className: 'md-fmt no-disable md-hide-sm', text: '◫', title: 'Рядом' },
+                { name: 'fullscreen', action: EasyMDE.toggleFullScreen, className: 'md-fmt no-disable', text: '⛶', title: 'На весь экран' }
+            ],
+            insertTexts: { link: ['[', '](https://)'] }
+            // Ctrl+B / Ctrl+I / Ctrl+K — дефолтные шорткаты EasyMDE, совпадают со старыми
+        });
+
+        mde.codemirror.on('change', () => syncTextarea(mde));
+        mdeInstances.set(ta, mde);
+
+        // Программные записи в textarea (цитирование/очистка) -> в CodeMirror
+        ta.addEventListener('input', () => {
+            if (mde.value() !== ta.value) mde.value(ta.value);
+        });
+
+        // Ctrl+Enter — отправить форму (как раньше)
+        const form = ta.closest('form');
+        if (form) {
+            form.addEventListener('keydown', e => {
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    syncTextarea(mde);
+                    form.requestSubmit();
+                }
+            });
+        }
+    });
+
+    // ===== Автодополнение @упоминаний (EasyMDE) =====
+    mdeInstances.forEach((mde, ta) => {
+        const cm = mde.codemirror;
+        let box = null, items = [], active = 0, from = null;
+
+        const closeBox = () => { if (box) { box.remove(); box = null; items = []; } };
+
+        const pick = name => {
+            cm.replaceRange('@' + name + ' ', from, cm.getCursor());
+            closeBox();
+            cm.focus();
+        };
+
+        const render = () => {
+            if (!items.length) { closeBox(); return; }
+            if (!box) {
+                box = document.createElement('div');
+                box.className = 'mention-box';
+                ta.closest('.md-editor').appendChild(box);
+            }
+            box.innerHTML = '';
+            items.forEach((u, i) => {
+                const row = document.createElement('div');
+                row.className = 'mention-item' + (i === active ? ' active' : '');
+                const img = document.createElement('img');
+                img.src = u.avatar || '/assets/images/default-avatar.svg';
+                img.alt = '';
+                row.appendChild(img);
+                row.appendChild(document.createTextNode(u.username));
+                row.addEventListener('mousedown', e => { e.preventDefault(); pick(u.username); });
+                box.appendChild(row);
+            });
+        };
+
+        cm.on('change', async () => {
+            const cur = cm.getCursor();
+            const before = cm.getRange({ line: cur.line, ch: 0 }, cur);
+            const m = before.match(/@([a-zA-Z0-9_]{1,20})$/);
+            if (!m) { closeBox(); return; }
+            from = { line: cur.line, ch: cur.ch - m[0].length };
+            try {
+                const res = await fetch('/api/users.php?q=' + encodeURIComponent(m[1]));
+                items = await res.json();
+                active = 0;
+                render();
+            } catch (e) { closeBox(); }
+        });
+
+        cm.on('keydown', (inst, e) => {
+            if (!box || !items.length) return;
+            if (e.key === 'ArrowDown') { e.preventDefault(); active = (active + 1) % items.length; render(); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); active = (active - 1 + items.length) % items.length; render(); }
+            else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(items[active].username); }
+            else if (e.key === 'Escape') { closeBox(); }
+        });
+
+        cm.on('blur', () => setTimeout(closeBox, 150));
+    });
+
     // ===== Счётчик символов в форме темы =====
     const contentInput = document.getElementById('content');
     const charCount = document.getElementById('charCount');
@@ -158,6 +317,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const topicForm = document.getElementById('topicForm');
     if (topicForm) {
         topicForm.addEventListener('submit', function(e) {
+            const ta = document.getElementById('content');
+            const mde = mdeInstances.get(ta);
+            if (mde) syncTextarea(mde);
             const title = document.getElementById('title').value.trim();
             const content = document.getElementById('content').value.trim();
             let errors = [];
@@ -202,10 +364,16 @@ document.addEventListener('DOMContentLoaded', function() {
             replyContent.value += (replyContent.value ? '\n' : '') + quote;
 
             updateReplyCount();
-            replyContent.dispatchEvent(new Event('input'));
+            replyContent.dispatchEvent(new Event('input')); // подхватится в CodeMirror
             document.getElementById('reply').scrollIntoView({ behavior: 'smooth', block: 'center' });
-            replyContent.focus();
-            replyContent.setSelectionRange(replyContent.value.length, replyContent.value.length);
+            const mde = mdeInstances.get(replyContent);
+            if (mde) {
+                mde.codemirror.focus();
+                mde.codemirror.setCursor(mde.codemirror.lineCount() - 1, mde.codemirror.getLine(mde.codemirror.lineCount() - 1).length);
+            } else {
+                replyContent.focus();
+                replyContent.setSelectionRange(replyContent.value.length, replyContent.value.length);
+            }
         });
     });
 
@@ -215,8 +383,10 @@ document.addEventListener('DOMContentLoaded', function() {
             if (replyContent.value && !confirm('Очистить поле ответа?')) return;
             replyContent.value = '';
             updateReplyCount();
-            replyContent.dispatchEvent(new Event('input'));
-            replyContent.focus();
+            replyContent.dispatchEvent(new Event('input')); // подхватится в CodeMirror
+            const mde = mdeInstances.get(replyContent);
+            if (mde) { mde.clearAutosavedValue(); mde.codemirror.focus(); }
+            else replyContent.focus();
         });
     }
 
@@ -224,6 +394,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const replyForm = document.getElementById('replyForm');
     if (replyForm) {
         replyForm.addEventListener('submit', function(e) {
+            const mde = mdeInstances.get(replyContent);
+            if (mde) syncTextarea(mde);
             const text = replyContent.value.trim();
             let errors = [];
 
@@ -410,6 +582,8 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         editForm.addEventListener('submit', function(e) {
+            const mde = mdeInstances.get(contentEl);
+            if (mde) syncTextarea(mde);
             const text = contentEl.value.trim();
             const minLen = titleEl ? FG.topicMin : FG.replyMin;
             let errors = [];
@@ -443,184 +617,6 @@ document.addEventListener('DOMContentLoaded', function() {
         f.addEventListener('submit', e => {
             if (!confirm('Восстановить эту версию? Текущая сохранится в истории.')) e.preventDefault();
         });
-    });
-
-    // ===== Markdown-редактор: live-подсветка прямо в поле ввода (overlay) =====
-    // Текст остаётся Markdown, но форматируется мгновенно при вводе:
-    // **жирный** виден жирным, заголовки/код/цитаты/@ники подсвечены в самой строке.
-    const mdEscape = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-
-    // Единый проход по ПЛОСКОМУ тексту: альтернативы потребляют маркеры целиком,
-    // повторных замен поверх HTML нет — перекрёстные/непарные span невозможны.
-    // Границы как в серверном mdRender: контент не начинается/не кончается пробелом,
-    // opening '*' не прилипает к слову слева. Незавершённое "*курсив *" — обычный текст.
-    // Контент bold допускает одиночные '*' (вложенный курсив), но не '**' —
-    // соседние **a** и **b** не склеиваются. Совпадает с серверным mdRender.
-    const MD_INLINE_RE = new RegExp([
-        '(`[^`\\n]+`)',                                                        // 1: inline-код
-        '(^|[^*\\w])(\\*\\*)(\\S(?:(?:[^*\\n]|\\*(?!\\*))*\\S)?)\\*\\*(?!\\*)', // 2,3,4: bold
-        '(^|[^*\\w])(\\*)(\\S(?:[^*\\n]*\\S)?)\\*(?!\\*)',                     // 5,6,7: italic
-        '(~~)(\\S(?:[^~\\n]*\\S)?)~~',                                         // 8,9: strike
-        '\\[([^\\]\\n]{1,200})\\]\\((https?://[^\\s)]{1,500})\\)',              // 10,11: ссылка
-        '(^|[^\\w>/])(@[a-zA-Z0-9_]{3,50})'                                    // 12,13: @ник
-    ].join('|'), 'g');
-
-    const mdInline = (esc, depth) => {
-        depth = depth || 0;
-        if (depth > 4) return esc; // страховка от глубокой вложенности
-        return esc.replace(MD_INLINE_RE, function(m, code, bPre, bMk, bTxt, iPre, iMk, iTxt, sMk, sTxt, lTxt, lUrl, aPre, aTxt) {
-            if (code !== undefined) return '<span class="hl-code">' + code + '</span>';
-            if (bMk !== undefined) return bPre + '<span class="hl-bold"><span class="hl-mk">' + bMk + '</span>' + mdInline(bTxt, depth + 1) + '<span class="hl-mk">' + bMk + '</span></span>';
-            if (iMk !== undefined) return iPre + '<span class="hl-em"><span class="hl-mk">' + iMk + '</span>' + iTxt + '<span class="hl-mk">' + iMk + '</span></span>';
-            if (sMk !== undefined) return '<span class="hl-del"><span class="hl-mk">' + sMk + '</span>' + sTxt + '<span class="hl-mk">' + sMk + '</span></span>';
-            if (lTxt !== undefined) return '<span class="hl-mk">[</span><span class="hl-link">' + lTxt + '</span><span class="hl-mk">](</span><span class="hl-url">' + lUrl + '</span><span class="hl-mk">)</span>';
-            return aPre + '<span class="hl-at">' + aTxt + '</span>';
-        });
-    };
-
-    const mdHighlight = src => {
-        let inCode = false;
-        return src.split('\n').map(line => {
-            const esc = mdEscape(line);
-            if (/^\s*```/.test(line)) {
-                inCode = !inCode;
-                return '<span class="hl-fence">' + esc + '</span>';
-            }
-            if (inCode) return '<span class="hl-block">' + esc + '</span>';
-            let m = line.match(/^(#{1,4})(\s+)(.*)$/);
-            if (m) return '<span class="hl-head"><span class="hl-mk">'+m[1]+'</span>'+m[2]+mdInline(mdEscape(m[3]))+'</span>';
-            m = esc.match(/^(&gt;)(\s?)(.*)$/);
-            if (m) return '<span class="hl-quote"><span class="hl-mk">'+m[1]+'</span>'+m[2]+mdInline(m[3])+'</span>';
-            m = line.match(/^(\s*)([-*+]|\d+[.)])(\s+)(.*)$/);
-            if (m) return m[1]+'<span class="hl-mk">'+mdEscape(m[2])+'</span>'+m[3]+mdInline(mdEscape(m[4]));
-            return mdInline(esc);
-        }).join('\n');
-    };
-
-    document.querySelectorAll('.md-editor').forEach(wrap => {
-        const ta = wrap.querySelector('textarea');
-        const hl = wrap.querySelector('.md-highlight');
-
-        const paint = () => {
-            // завершающий \n нужен, чтобы последняя пустая строка совпадала по высоте
-            hl.innerHTML = mdHighlight(ta.value) + '\n';
-            hl.scrollTop = ta.scrollTop;
-            hl.scrollLeft = ta.scrollLeft;
-        };
-        ta.addEventListener('input', paint);
-        ta.addEventListener('scroll', () => {
-            hl.scrollTop = ta.scrollTop;
-            hl.scrollLeft = ta.scrollLeft;
-        });
-        paint();
-
-        const surround = (before, after, placeholder) => {
-            const s = ta.selectionStart, e = ta.selectionEnd;
-            const sel = ta.value.slice(s, e) || placeholder;
-            ta.setRangeText(before + sel + after, s, e, 'end');
-            ta.focus();
-            ta.dispatchEvent(new Event('input'));
-        };
-        const linePrefix = (prefix) => {
-            const s = ta.selectionStart;
-            const start = ta.value.lastIndexOf('\n', s - 1) + 1;
-            ta.setRangeText(prefix, start, start, 'end');
-            ta.focus();
-            ta.dispatchEvent(new Event('input'));
-        };
-
-        wrap.querySelectorAll('.md-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const a = btn.dataset.action;
-                if (a === 'bold') surround('**','**','жирный');
-                else if (a === 'italic') surround('*','*','курсив');
-                else if (a === 'strike') surround('~~','~~','зачёркнутый');
-                else if (a === 'code') surround('`','`','код');
-                else if (a === 'codeblock') surround('\n```\n','\n```\n','код');
-                else if (a === 'link') surround('[','](https://)','текст ссылки');
-                else if (a === 'quote') linePrefix('> ');
-                else if (a === 'ul') linePrefix('- ');
-                else if (a === 'ol') linePrefix('1. ');
-                else if (a === 'h') linePrefix('### ');
-                else if (a === 'hr') surround('\n\n---\n\n','','');
-            });
-        });
-
-        ta.addEventListener('keydown', e => {
-            if (e.key === 'Tab' && !e.shiftKey) {
-                e.preventDefault();
-                ta.setRangeText('  ', ta.selectionStart, ta.selectionEnd, 'end');
-                return;
-            }
-            if (!(e.ctrlKey || e.metaKey)) return;
-            const k = e.key.toLowerCase();
-            if (k === 'b') { e.preventDefault(); surround('**','**','жирный'); }
-            else if (k === 'i') { e.preventDefault(); surround('*','*','курсив'); }
-            else if (k === 'k') { e.preventDefault(); surround('[','](https://)','текст ссылки'); }
-            else if (k === 'enter') { e.preventDefault(); ta.closest('form').requestSubmit(); }
-        });
-    });
-
-    // ===== Автодополнение @упоминаний =====
-    document.querySelectorAll('.md-editor textarea').forEach(ta => {
-        let box = null, items = [], active = 0, start = -1;
-
-        const closeBox = () => { if (box) { box.remove(); box = null; items = []; } };
-
-        const pick = (name) => {
-            const pos = ta.selectionStart;
-            ta.setRangeText('@' + name + ' ', start, pos, 'end');
-            closeBox();
-            ta.focus();
-            ta.dispatchEvent(new Event('input'));
-        };
-
-        const render = () => {
-            if (!items.length) { closeBox(); return; }
-            if (!box) {
-                box = document.createElement('div');
-                box.className = 'mention-box';
-                ta.closest('.md-editor').appendChild(box);
-            }
-            box.innerHTML = '';
-            items.forEach((u, i) => {
-                const row = document.createElement('div');
-                row.className = 'mention-item' + (i === active ? ' active' : '');
-                row.dataset.name = u.username;
-                const img = document.createElement('img');
-                img.src = u.avatar || '/assets/images/default-avatar.svg';
-                img.alt = '';
-                row.appendChild(img);
-                row.appendChild(document.createTextNode(u.username));
-                box.appendChild(row);
-            });
-            box.querySelectorAll('.mention-item').forEach(el => {
-                el.addEventListener('mousedown', e => { e.preventDefault(); pick(el.dataset.name); });
-            });
-        };
-
-        ta.addEventListener('input', async () => {
-            const pos = ta.selectionStart;
-            const m = ta.value.slice(0, pos).match(/@([a-zA-Z0-9_]{1,20})$/);
-            if (!m) { closeBox(); return; }
-            start = pos - m[0].length;
-            try {
-                const res = await fetch('/api/users.php?q=' + encodeURIComponent(m[1]));
-                items = await res.json();
-                active = 0;
-                render();
-            } catch (e) { closeBox(); }
-        });
-
-        ta.addEventListener('keydown', e => {
-            if (!box || !items.length) return;
-            if (e.key === 'ArrowDown') { e.preventDefault(); active = (active + 1) % items.length; render(); }
-            else if (e.key === 'ArrowUp') { e.preventDefault(); active = (active - 1 + items.length) % items.length; render(); }
-            else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(items[active].username); }
-            else if (e.key === 'Escape') { closeBox(); }
-        });
-
-        ta.addEventListener('blur', () => setTimeout(closeBox, 150));
     });
 
     // ===== Очистка прочитанных уведомлений =====

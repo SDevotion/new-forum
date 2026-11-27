@@ -24,6 +24,10 @@
         </div>
     </footer>
     
+    <?php if (!empty($mdEditorAssets)): ?>
+        <link rel="stylesheet" href="/assets/vendor/easymde/easymde.min.css?v=<?= @filemtime(__DIR__ . '/../assets/vendor/easymde/easymde.min.css') ?: 1 ?>">
+        <script src="/assets/vendor/easymde/easymde.min.js?v=<?= @filemtime(__DIR__ . '/../assets/vendor/easymde/easymde.min.js') ?: 1 ?>"></script>
+    <?php endif; ?>
     <script src="/assets/js/main.js?v=<?= @filemtime(__DIR__ . '/../assets/js/main.js') ?: 1 ?>"></script>
 </body>
 </html>

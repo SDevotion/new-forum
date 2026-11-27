@@ -164,6 +164,7 @@ require_once __DIR__ . '/../includes/header.php';
             <?php
             $mdName = 'content'; $mdId = 'content'; $mdValue = $content;
             $mdRows = 10; $mdRequired = true;
+            $mdAutosaveId = 'topic-' . (int)$forum['id'];
             require __DIR__ . '/../includes/md_editor.php';
             ?>
             <small class="form-hint">Минимум <?= setting('topic_min', 10) ?> символов. Символов: <span id="charCount">0</span> / <?= setting('message_max', 20000) ?></small>

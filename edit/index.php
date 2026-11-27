@@ -209,6 +209,8 @@ require_once __DIR__ . '/../includes/header.php';
             <?php
             $mdName = 'content'; $mdId = 'content'; $mdValue = $content;
             $mdRows = 12; $mdRequired = true;
+            // Автосейв здесь НЕ включаем: черновик не должен конфликтовать
+            // с оптимистичной блокировкой по edit_count.
             require __DIR__ . '/../includes/md_editor.php';
             ?>
             <small class="form-hint">Символов: <span id="charCount">0</span> / <?= setting('message_max', 20000) ?></small>

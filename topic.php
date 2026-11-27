@@ -316,6 +316,7 @@ require_once __DIR__ . '/includes/header.php';
                 <?php
                 $mdName = 'content'; $mdId = 'replyContent'; $mdValue = '';
                 $mdRows = 6; $mdRequired = true;
+                $mdAutosaveId = 'reply-' . $topicId;
                 require __DIR__ . '/includes/md_editor.php';
                 ?>
                 <small class="form-hint">Символов: <span id="replyCharCount">0</span> / <?= setting('message_max', 20000) ?></small>

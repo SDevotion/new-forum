@@ -1742,50 +1742,38 @@ select.form-control{cursor:pointer}
  .members-grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
 }
 
-/* ===== Markdown-редактор ===== */
-.md-editor{border:2px solid var(--color-gray-200);border-radius:var(--radius-md);overflow:hidden;background:#fff}
-.md-toolbar{display:flex;gap:4px;flex-wrap:wrap;padding:8px;background:var(--color-gray-50);border-bottom:1px solid var(--color-gray-200)}
-.md-btn{min-width:32px;height:30px;padding:0 8px;border:1px solid var(--color-gray-200);background:#fff;border-radius:var(--radius-sm);cursor:pointer;font-size:13px;color:var(--color-gray-600);transition:var(--transition);font-family:inherit}
-.md-btn:hover{background:var(--color-blue-50);border-color:var(--color-blue-300);color:var(--color-blue-600)}
-.md-sep{width:1px;background:var(--color-gray-200);margin:2px 4px}
-/* Live-редактор: прозрачный textarea поверх подсвеченного слоя.
-   Метрики ОБОИХ слоёв обязаны совпадать символ-в-символ. */
-.md-live-wrap{position:relative;background:#fff}
-.md-highlight,
-.md-editor textarea.md-live-input{
-    margin:0;border:none;border-radius:0;padding:12px 16px;
-    font-family:'SF Mono',Consolas,Monaco,'Courier New',monospace;
-    font-size:14px;line-height:1.6;letter-spacing:normal;tab-size:2;
-    white-space:pre-wrap;overflow-wrap:break-word;word-break:normal;
-    min-height:160px;width:100%;box-sizing:border-box;
+/* ===== Markdown-редактор (EasyMDE, локальный вендор) ===== */
+.md-editor{position:relative}
+.md-editor .EasyMDEContainer .CodeMirror{
+    border:2px solid var(--color-gray-200);border-radius:0 0 var(--radius-md) var(--radius-md);
+    font-family:'SF Mono',Consolas,Monaco,'Courier New',monospace;font-size:14px;line-height:1.6;
+    color:var(--color-gray-800);padding:8px 12px;
 }
-.md-highlight{
-    position:absolute;inset:0;overflow:hidden;pointer-events:none;
-    color:var(--color-gray-800);background:transparent;
+.md-editor .CodeMirror-focused{border-color:var(--color-blue-300)}
+.md-editor .editor-toolbar{
+    display:flex;gap:4px;flex-wrap:wrap;align-items:center;padding:8px;opacity:1;
+    background:var(--color-gray-50);border:2px solid var(--color-gray-200);border-bottom:1px solid var(--color-gray-200);
+    border-radius:var(--radius-md) var(--radius-md) 0 0;
 }
-.md-editor textarea.md-live-input{
-    position:relative;display:block;background:transparent;
-    color:transparent;caret-color:var(--color-gray-900);
-    box-shadow:none!important;resize:vertical;overflow:auto;
+.md-editor .editor-toolbar button.md-fmt{
+    min-width:32px;height:30px;padding:0 8px;border:1px solid var(--color-gray-200);
+    background:#fff;border-radius:var(--radius-sm);cursor:pointer;font-size:13px;font-weight:400;
+    color:var(--color-gray-600);transition:var(--transition);font-family:inherit;
 }
-.md-editor textarea.md-live-input::placeholder{color:var(--color-gray-400)}
-.md-editor textarea.md-live-input::selection{background:rgba(37,99,235,.25);color:transparent}
-/* Подсветка: только цвет/фон/начертание, БЕЗ изменения размера шрифта (метрика!) */
-.hl-mk{color:var(--color-gray-300)}
-.hl-bold{font-weight:700;color:var(--color-gray-900)}
-.hl-em{font-style:italic;color:var(--color-gray-800)}
-.hl-del{text-decoration:line-through;color:var(--color-gray-400)}
-.hl-code{background:var(--color-gray-100);color:var(--color-blue-700);border-radius:3px}
-.hl-fence{color:var(--color-gray-400)}
-.hl-block{background:var(--color-gray-100);color:var(--color-gray-700);display:inline-block;width:100%}
-.hl-head{font-weight:700;color:var(--color-blue-700)}
-.hl-quote{color:var(--color-gray-500);font-style:italic}
-.hl-at{background:var(--color-blue-100);color:var(--color-blue-700);border-radius:3px;font-weight:600}
-.hl-link{color:var(--color-blue-600);text-decoration:underline}
-.hl-url{color:var(--color-gray-400)}
-.md-preview-body{padding:16px;min-height:160px;line-height:1.7;color:var(--color-gray-800)}
+.md-editor .editor-toolbar button.md-fmt:hover,
+.md-editor .editor-toolbar button.md-fmt.active{background:var(--color-blue-50);border-color:var(--color-blue-300);color:var(--color-blue-600)}
+.md-fmt-b{font-weight:700!important}
+.md-fmt-i{font-style:italic}
+.md-fmt-s{text-decoration:line-through}
+.md-editor .editor-toolbar i.separator{border-left:1px solid var(--color-gray-200);border-right:none;margin:2px 4px;height:22px}
+.md-editor .editor-statusbar{color:var(--color-gray-400);font-size:12px;padding:4px 12px}
+.md-editor .editor-preview,.md-editor .editor-preview-side{background:#fff;padding:16px;line-height:1.7;color:var(--color-gray-800)}
+.md-editor .editor-preview-side{border-color:var(--color-gray-200);top:52px}
+.md-editor .editor-toolbar.fullscreen{border:none;border-radius:0;height:52px;z-index:1200}
+.md-editor .CodeMirror-fullscreen{top:52px;z-index:1200}
+.md-editor .editor-preview-side{z-index:1200}
 .md-empty{color:var(--color-gray-400)}
-.md-hint{padding:6px 12px;background:var(--color-gray-50);border-top:1px solid var(--color-gray-100);font-size:12px;color:var(--color-gray-400)}
+@media(max-width:768px){.md-editor .editor-toolbar button.md-hide-sm{display:none}}
 
 /* Отрисовка Markdown в сообщениях */
 .post-content p{margin-bottom:12px}
@@ -1838,7 +1826,7 @@ h3.md-h{font-size:19px}h4.md-h{font-size:17px}h5.md-h{font-size:15px}h6.md-h{fon
 .mention:hover{background:var(--color-blue-200)}
 
 .md-editor{position:relative}
-.mention-box{position:absolute;left:12px;bottom:40px;background:#fff;border:1px solid var(--color-gray-200);border-radius:var(--radius-md);box-shadow:var(--shadow-lg);z-index:50;min-width:200px;max-height:240px;overflow-y:auto}
+.mention-box{position:absolute;left:12px;bottom:64px;background:#fff;border:1px solid var(--color-gray-200);border-radius:var(--radius-md);box-shadow:var(--shadow-lg);z-index:50;min-width:200px;max-height:240px;overflow-y:auto}
 .mention-item{display:flex;align-items:center;gap:8px;padding:8px 12px;cursor:pointer;font-size:14px;color:var(--color-gray-700)}
 .mention-item img{width:24px;height:24px;border-radius:50%;object-fit:cover}
 .mention-item.active,.mention-item:hover{background:var(--color-blue-50);color:var(--color-blue-600)}

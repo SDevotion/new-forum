@@ -1,4 +1,16 @@
 <?php
+// edit/index.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [3.4/приоритет#7] edit_version ОБЯЗАТЕЛЕН в POST: отсутствие/массив → отказ,
+//       а не молчаливая подстановка свежего edit_count (защита от lost update
+//       больше не отключается старым клиентом).
+// [1.5] Новые вложения сохраняются внутри транзакции правки; при rollback — удаляются.
+// [1.6-паттерн] Лимитер после валидации; отклонённая правка возвращает квоту;
+//       конфликт версий тоже возвращает квоту (это не злоупотребление).
+// [6.массовый 500] Ввод через postStr()/postInt(); attach_remove[] фильтруется is_scalar.
+// Оптимистичная блокировка, скрытие ревизий стафф-правки, PRG — сохранены.
+
 require_once __DIR__ . '/../includes/editing.php';
 require_once __DIR__ . '/../includes/attachments.php';
 require_once __DIR__ . '/../includes/ratelimit.php';
@@ -10,8 +22,9 @@ $db = Database::getInstance()->getConnection();
 $me = getCurrentUser();
 $isStaff = isModerator();
 
-$type = ($_REQUEST['type'] ?? '') === 'post' ? 'post' : 'topic';
-$id = (int)($_REQUEST['id'] ?? 0);
+$isPost = $_SERVER['REQUEST_METHOD'] === 'POST';
+$type = ($isPost ? postStr('type') : getStr('type')) === 'post' ? 'post' : 'topic';
+$id = $isPost ? postInt('id') : getInt('id');
 
 if ($type === 'topic') {
     $stmt = $db->prepare("
@@ -62,15 +75,13 @@ $title = $obj['title'] ?? '';
 $content = $obj['content'];
 $reason = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
+if ($isPost) {
+    if (!verifyCSRFToken(postStr('csrf_token'))) {
         $errors[] = 'Недействительный запрос. Обновите страницу.';
-    } elseif (!rateLimitCheck('content_edit', max(1, setting('rl_edit_max', 20)), max(60, setting('rl_edit_window', 600)))) {
-        $errors[] = 'Слишком много правок подряд. Подождите ' . ceil(rateLimitRetryAfter('content_edit', max(60, setting('rl_edit_window', 600))) / 60) . ' мин.';
     } else {
-        $content = trim($_POST['content'] ?? '');
-        $reason  = trim($_POST['reason'] ?? '');
-        if ($type === 'topic') $title = trim($_POST['title'] ?? '');
+        $content = trim(postStr('content'));
+        $reason  = trim(postStr('reason'));
+        if ($type === 'topic') $title = trim(postStr('title'));
 
         $titleMin = setting('title_min', 5);
         $titleMax = setting('title_max', 200);
@@ -86,12 +97,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         elseif (mb_strlen($content) > $msgMax) $errors[] = "Сообщение слишком длинное (максимум $msgMax символов)";
         if (mb_strlen($reason) > 255) $errors[] = 'Причина правки: максимум 255 символов';
 
-        // отмеченные к удалению — только вложения этого объекта
-        $removeIds = array_map('intval', (array)($_POST['attach_remove'] ?? []));
+        // edit_version обязателен: без него оптимистичная блокировка не работает.
+        $rawVersion = $_POST['edit_version'] ?? null;
+        $baseVersion = null;
+        if (!is_scalar($rawVersion) || !ctype_digit((string)$rawVersion)) {
+            $errors[] = 'Форма устарела. Откройте редактор заново.';
+        } else {
+            $baseVersion = (int)$rawVersion;
+        }
+
+        $removeIds = [];
+        foreach ((array)($_POST['attach_remove'] ?? []) as $rid) {
+            if (is_scalar($rid)) $removeIds[] = (int)$rid;
+        }
         $validIds = array_map('intval', array_column($attachExisting, 'id'));
         $removeIds = array_values(array_intersect($removeIds, $validIds));
 
-        // лимит считаем суммарно: остающиеся старые + новые
         $attachFiles = attachNormalizeFiles();
         $remaining = count($attachExisting) - count($removeIds);
         $errors = array_merge($errors, attachValidate($attachFiles, $remaining));
@@ -103,17 +124,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect($backUrl);
         }
 
+        // Лимитер — после валидации.
         if (empty($errors)) {
+            $rlWindow = max(60, setting('rl_edit_window', 600));
+            if (!rateLimitCheck('content_edit', max(1, setting('rl_edit_max', 20)), $rlWindow)) {
+                $errors[] = 'Слишком много правок подряд. Подождите ' . ceil(rateLimitRetryAfter('content_edit', $rlWindow) / 60) . ' мин.';
+            }
+        }
+
+        if (empty($errors)) {
+            $savedFiles = [];
+            $removedNames = [];
             try {
                 $db->beginTransaction();
-                // Правка модератора чужого объекта: старая версия скрывается от публики
-                // (зачистка контента не должна обходиться через историю правок).
                 $hideRevision = $isStaff && (int)$me['id'] !== (int)$obj['user_id'];
                 saveRevision($type, $id, $obj['title'], $obj['content'], $reason, $hideRevision);
 
-                // Оптимистичная блокировка: если объект изменился с момента открытия
-                // формы (edit_count вырос), правку отклоняем — иначе lost update.
-                $baseVersion = (int)($_POST['edit_version'] ?? $obj['edit_count']);
                 if ($type === 'topic') {
                     $st = $db->prepare("
                         UPDATE topics
@@ -131,11 +157,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 if ($st->rowCount() === 0) {
                     $db->rollBack();
+                    rateLimitRefund('content_edit');
                     setFlashMessage('error', 'Сообщение уже изменено кем-то другим. Откройте редактор заново.');
                     redirect($backUrl);
                 }
-                // Удаление отмеченных вложений (файлы с диска — только после commit)
-                $removedNames = [];
+
                 if ($removeIds) {
                     $in = implode(',', array_fill(0, count($removeIds), '?'));
                     $st = $db->prepare("SELECT stored_name FROM attachments WHERE target_type = ? AND target_id = ? AND id IN ($in)");
@@ -144,25 +170,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $db->prepare("DELETE FROM attachments WHERE target_type = ? AND target_id = ? AND id IN ($in)")
                        ->execute(array_merge([$type, $id], $removeIds));
                 }
+
+                // Новые файлы — в той же транзакции.
+                $savedFiles = attachStore($attachFiles, $type, $id, (int)$me['id']);
+
                 $db->commit();
-                foreach ($removedNames as $sn) attachUnlink($sn);
-
-                // Новые вложения (текст уже сохранён — ошибки хранилища не отменяют правку)
-                try {
-                    attachStore($attachFiles, $type, $id, (int)$me['id']);
-                } catch (Throwable $e) {
-                    error_log('Attach store error: ' . $e->getMessage());
-                    setFlashMessage('info', 'Изменения сохранены, но часть вложений не удалось сохранить');
-                    redirect($backUrl);
-                }
-
-                setFlashMessage('success', 'Изменения сохранены');
-                redirect($backUrl);
-            } catch (PDOException $e) {
+            } catch (Throwable $e) {
                 if ($db->inTransaction()) $db->rollBack();
+                foreach ($savedFiles as $sn) attachUnlink($sn);
+                rateLimitRefund('content_edit');
                 error_log('Edit error: ' . $e->getMessage());
                 $errors[] = 'Ошибка при сохранении. Попробуйте позже.';
+                $savedFiles = null; // сигнал: не продолжать
             }
+
+            if ($savedFiles !== null) {
+                foreach ($removedNames as $sn) attachUnlink($sn);
+                setFlashMessage('success', 'Изменения сохранены');
+                redirect($backUrl);
+            }
+        } elseif ($isPost) {
+            // Валидация отклонила форму — квота не списывалась (лимитер после валидации),
+            // refund не нужен; ничего не делаем.
         }
     }
 }
@@ -209,8 +238,6 @@ require_once __DIR__ . '/../includes/header.php';
             <?php
             $mdName = 'content'; $mdId = 'content'; $mdValue = $content;
             $mdRows = 12; $mdRequired = true;
-            // Автосейв здесь НЕ включаем: черновик не должен конфликтовать
-            // с оптимистичной блокировкой по edit_count.
             require __DIR__ . '/../includes/md_editor.php';
             ?>
             <small class="form-hint">Символов: <span id="charCount">0</span> / <?= setting('message_max', 20000) ?></small>

@@ -1,4 +1,13 @@
 <?php
+// profile/edit.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [6.массовый 500] Весь ввод через postStr() — массивы в полях не фаталят.
+// [2.9] Смена пароля: csrfReset() вместо легаси unset($_SESSION['csrf_token']).
+// [new] Аватар: файл загружается ДО UPDATE, при ошибке UPDATE новый файл удаляется
+//       (не остаётся сиротой до orphan-чистки); старый удаляется только после commit.
+// Антибрутфорс смены пароля (лимит только по неудачным verify) — сохранён.
+
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/avatar.php';
 require_once __DIR__ . '/../includes/ratelimit.php';
@@ -30,23 +39,19 @@ $notifyMentions = (bool)$user['notify_mentions'];
 $notifyEmail = (bool)($user['notify_email'] ?? false);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
+    if (!verifyCSRFToken(postStr('csrf_token'))) {
         $errors[] = 'Недействительный запрос. Обновите страницу.';
     } else {
-        $action = $_POST['action'] ?? '';
+        $action = postStr('action');
 
         // --- Смена пароля ---
         if ($action === 'password') {
-            $old = $_POST['old_password'] ?? '';
-            $new = $_POST['new_password'] ?? '';
-            $confirm = $_POST['new_password_confirm'] ?? '';
+            $old = postStr('old_password');
+            $new = postStr('new_password');
+            $confirm = postStr('new_password_confirm');
 
-            // Антибрутфорс: лимит считаем ТОЛЬКО по неудачным проверкам старого пароля.
-            // Успешная смена не тратит квоту — угнанная сессия не может запереть
-            // владельцу форму смены пароля исчерпанием лимита.
-            $db0 = Database::getInstance()->getConnection();
             $pcKey = 'u' . $userId;
-            $st = $db0->prepare("SELECT COUNT(*) FROM rate_limits WHERE action = 'password_change' AND actor_key = ? AND created_at >= (NOW() - INTERVAL 900 SECOND)");
+            $st = $db->prepare("SELECT COUNT(*) FROM rate_limits WHERE action = 'password_change' AND actor_key = ? AND created_at >= (NOW() - INTERVAL 900 SECOND)");
             $st->execute([$pcKey]);
             if ((int)$st->fetchColumn() >= 5) {
                 $passErrors[] = 'Слишком много неудачных попыток. Подождите 15 минут.';
@@ -55,26 +60,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt->execute([$userId]);
                 $hash = $stmt->fetchColumn();
 
-                if (!is_string($old) || !is_string($new) || !is_string($confirm)) {
-                    $passErrors[] = 'Некорректные данные формы';
-                } else {
-                    if (!password_verify($old, $hash)) {
-                        $passErrors[] = 'Текущий пароль указан неверно';
-                        $db0->prepare("INSERT INTO rate_limits (action, actor_key, ip_address) VALUES ('password_change', ?, ?)")
-                            ->execute([$pcKey, rateLimitIp()]);
-                    }
-                    if (mb_strlen($new) < setting('password_min', 6)) {
-                        $passErrors[] = 'Новый пароль должен содержать минимум ' . setting('password_min', 6) . ' символов';
-                    }
-                    if (strlen($new) > 4096) {
-                        $passErrors[] = 'Новый пароль слишком длинный (максимум 4096 байт)';
-                    }
-                    if ($new !== $confirm) {
-                        $passErrors[] = 'Новые пароли не совпадают';
-                    }
-                    if ($old === $new && $old !== '') {
-                        $passErrors[] = 'Новый пароль должен отличаться от текущего';
-                    }
+                if (!password_verify($old, $hash)) {
+                    $passErrors[] = 'Текущий пароль указан неверно';
+                    $db->prepare("INSERT INTO rate_limits (action, actor_key, ip_address) VALUES ('password_change', ?, ?)")
+                        ->execute([$pcKey, rateLimitIp()]);
+                }
+                if (mb_strlen($new) < setting('password_min', 6)) {
+                    $passErrors[] = 'Новый пароль должен содержать минимум ' . setting('password_min', 6) . ' символов';
+                }
+                if (strlen($new) > 4096) {
+                    $passErrors[] = 'Новый пароль слишком длинный (максимум 4096 байт)';
+                }
+                if ($new !== $confirm) {
+                    $passErrors[] = 'Новые пароли не совпадают';
+                }
+                if ($old === $new && $old !== '') {
+                    $passErrors[] = 'Новый пароль должен отличаться от текущего';
                 }
 
                 if (empty($passErrors)) {
@@ -84,7 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     session_regenerate_id(true);
                     $db->prepare("DELETE FROM user_sessions WHERE user_id = ? AND session_token <> ?")
                        ->execute([$userId, session_id()]);
-                    unset($_SESSION['csrf_token']);
+                    csrfReset();
                     generateCSRFToken();
                     rateLimitClear('password_change', 'u' . $userId);
                     setFlashMessage('success', 'Пароль успешно изменён');
@@ -94,17 +95,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // --- Удаление аватара ---
         } elseif ($action === 'delete_avatar') {
-            deleteAvatarFile($user['avatar']);
             $db->prepare("UPDATE users SET avatar = NULL WHERE id = ?")->execute([$userId]);
+            deleteAvatarFile($user['avatar']);
             setFlashMessage('success', 'Аватар удалён');
             redirect('/profile/edit.php');
 
         // --- Основные данные ---
         } else {
-            $bio       = trim($_POST['bio'] ?? '');
-            $location  = trim($_POST['location'] ?? '');
-            $website   = trim($_POST['website'] ?? '');
-            $signature = trim($_POST['signature'] ?? '');
+            $bio       = trim(postStr('bio'));
+            $location  = trim(postStr('location'));
+            $website   = trim(postStr('website'));
+            $signature = trim(postStr('signature'));
             $notifyReplies = isset($_POST['notify_replies']);
             $notifyMentions = isset($_POST['notify_mentions']);
             $notifyEmail = isset($_POST['notify_email']);
@@ -164,6 +165,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     setFlashMessage('success', 'Профиль обновлён');
                     redirect('/profile.php?id=' . $userId);
                 } catch (PDOException $e) {
+                    // Новый файл не привязан — убираем сразу, не ждём orphan-чистки.
+                    if ($newAvatar !== null) deleteAvatarFile($newAvatar);
                     error_log("Profile update error: " . $e->getMessage());
                     $errors[] = 'Ошибка при сохранении. Попробуйте позже.';
                 }

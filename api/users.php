@@ -1,20 +1,29 @@
 <?php
+// api/users.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [6.api] avatar отдаётся через avatarUrl() (строгий regex + is_file) — битые
+//       пути не уходят в JSON.
+// [6.массовый 500] Ввод через getStr().
+// LIKE-экранирование и лимитер — сохранены.
+
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/ratelimit.php';
+require_once __DIR__ . '/../includes/avatar.php';
 
 header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store');
 
 if (!isLoggedIn()) { echo '[]'; exit; }
 if (!getCurrentUser()) { echo '[]'; exit; }
 
-// Лимит частоты автодополнения (антиэнумерация ников)
 if (!rateLimitCheck('autocomplete', 30, 60)) {
     http_response_code(429);
     echo '[]';
     exit;
 }
 
-$q = trim($_GET['q'] ?? '');
+$q = trim(getStr('q'));
 if ($q === '' || mb_strlen($q) > 20) { echo '[]'; exit; }
 $qLike = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q);
 
@@ -28,6 +37,7 @@ $stmt->execute([$qLike . '%']);
 $rows = $stmt->fetchAll();
 
 foreach ($rows as &$r) {
-    $r['avatar'] = $r['avatar'] ?: '/assets/images/default-avatar.svg';
+    // avatarUrl возвращает escape()-нутую строку; для JSON декодируем сущности обратно.
+    $r['avatar'] = htmlspecialchars_decode(avatarUrl($r['avatar']), ENT_QUOTES);
 }
 echo json_encode($rows, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

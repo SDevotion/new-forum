@@ -1,4 +1,15 @@
 <?php
+// admin/maintenance.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [5.6] orphan_attachments/orphan_avatars: известные имена грузятся ЧАНКАМИ
+//       по 5000 (keyset по id / курсор по пользователям), каталог обходится
+//       DirectoryIterator без загрузки всего списка в память; лимит удаления
+//       за прогон (5000 файлов) с сообщением «повторите» — запрос не висит минутами.
+// [new] Все массовые DELETE — пачками LIMIT (clean_*), как в cron.
+// [6.массовый 500] Ввод через postStr()/getStr()/getInt().
+// Grace-период 1 час для сирот — сохранён.
+
 require_once __DIR__ . '/../includes/permissions.php';
 requireAdmin();
 require_once __DIR__ . '/_layout.php';
@@ -7,16 +18,57 @@ require_once __DIR__ . '/../includes/attachments.php';
 $pageTitle = 'Обслуживание';
 $db = Database::getInstance()->getConnection();
 
-// Grace-период очистки сирот: файлы моложе часа не трогаем —
-// между move_uploaded_file и INSERT/UPDATE есть окно, когда файл ещё «сирота».
 define('ORPHAN_GRACE_SECONDS', 3600);
+define('ORPHAN_MAX_PER_RUN', 5000);
+
+/** Известные stored_name чанками по 5000 — массив в памяти ограничен размером таблицы, но без единого большого fetch. */
+function knownAttachmentNames($db) {
+    $known = [];
+    $lastId = 0;
+    while (true) {
+        $st = $db->prepare("SELECT id, stored_name FROM attachments WHERE id > ? ORDER BY id ASC LIMIT 5000");
+        $st->execute([$lastId]);
+        $rows = $st->fetchAll();
+        if (!$rows) break;
+        foreach ($rows as $r) { $known[$r['stored_name']] = true; $lastId = (int)$r['id']; }
+    }
+    return $known;
+}
+
+/** Удаление сирот в каталоге: потоковый обход, кап за прогон. Возвращает [removed, bytes, skipped, capped]. */
+function purgeOrphanFiles($dir, array $known, $skipNames = []) {
+    $removed = 0; $bytes = 0; $skipped = 0; $capped = false;
+    if (!is_dir($dir)) return [$removed, $bytes, $skipped, $capped];
+    $it = new DirectoryIterator($dir);
+    foreach ($it as $fi) {
+        if ($fi->isDot() || !$fi->isFile()) continue;
+        $fn = $fi->getFilename();
+        if (isset($known[$fn]) || isset($skipNames[$fn])) continue;
+        if (time() - $fi->getMTime() < ORPHAN_GRACE_SECONDS) { $skipped++; continue; }
+        if ($removed >= ORPHAN_MAX_PER_RUN) { $capped = true; break; }
+        $sz = $fi->getSize();
+        if (@unlink($fi->getPathname())) { $removed++; $bytes += $sz; }
+    }
+    return [$removed, $bytes, $skipped, $capped];
+}
+
+/** DELETE пачками до конца (для ручных операций админа). */
+function deleteInBatches($db, $sqlNoLimit, $batch = 2000) {
+    $total = 0;
+    do {
+        $n = $db->exec($sqlNoLimit . ' LIMIT ' . $batch);
+        $total += $n;
+        if ($n === $batch) usleep(20000);
+    } while ($n === $batch);
+    return $total;
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
+    if (!verifyCSRFToken(postStr('csrf_token'))) {
         setFlashMessage('error', 'Недействительный запрос');
         redirect('/admin/maintenance.php');
     }
-    $op = $_POST['op'] ?? '';
+    $op = postStr('op');
 
     switch ($op) {
         case 'recount':
@@ -44,71 +96,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             break;
 
         case 'clean_ratelimits':
-            $n = $db->exec("DELETE FROM rate_limits WHERE created_at < NOW() - INTERVAL 1 DAY");
-            $n += $db->exec("DELETE FROM post_dedup WHERE created_at < NOW() - INTERVAL 1 DAY");
+            $n = deleteInBatches($db, "DELETE FROM rate_limits WHERE created_at < NOW() - INTERVAL 1 DAY");
+            $n += deleteInBatches($db, "DELETE FROM post_dedup WHERE created_at < NOW() - INTERVAL 1 DAY");
             logModeration('maint_clean', 'system', 0, "Лимитеры частоты: удалено записей — $n");
             setFlashMessage('success', "Удалено записей rate_limits/post_dedup: $n");
             break;
 
         case 'clean_sessions':
-            $n = $db->exec("DELETE FROM user_sessions WHERE expires_at < NOW()");
+            $n = deleteInBatches($db, "DELETE FROM user_sessions WHERE expires_at < NOW()");
             logModeration('maint_clean', 'system', 0, "Сессии: удалено протухших записей — $n");
             setFlashMessage('success', "Удалено протухших сессий: $n");
             break;
 
         case 'clean_resets':
-            $n = $db->exec("DELETE FROM password_resets WHERE expires_at < NOW()");
+            $n = deleteInBatches($db, "DELETE FROM password_resets WHERE expires_at < NOW()");
             logModeration('maint_clean', 'system', 0, "Токены сброса пароля: удалено протухших — $n");
             setFlashMessage('success', "Удалено протухших токенов сброса пароля: $n");
             break;
 
         case 'clean_searchlog':
-            $n = $db->exec("DELETE FROM search_log WHERE created_at < NOW() - INTERVAL 90 DAY");
+            $n = deleteInBatches($db, "DELETE FROM search_log WHERE created_at < NOW() - INTERVAL 90 DAY");
             logModeration('maint_clean', 'system', 0, "Журнал поиска: удалено записей — $n");
             setFlashMessage('success', "Удалено записей search_log: $n");
             break;
 
         case 'clean_notifications':
-            $n = $db->exec("DELETE FROM notifications WHERE is_read = 1 AND created_at < NOW() - INTERVAL 30 DAY");
+            $n = deleteInBatches($db, "DELETE FROM notifications WHERE is_read = 1 AND created_at < NOW() - INTERVAL 30 DAY");
             logModeration('maint_clean', 'system', 0, "Прочитанные уведомления: удалено — $n");
             setFlashMessage('success', "Удалено прочитанных уведомлений: $n");
             break;
 
         case 'orphan_attachments':
-            // Файлы на диске без записи в attachments (старше grace-периода)
-            $known = $db->query("SELECT stored_name FROM attachments")->fetchAll(PDO::FETCH_COLUMN);
-            $known = array_flip($known);
-            $removed = 0; $bytes = 0; $skipped = 0;
-            foreach (@scandir(ATTACH_DIR) ?: [] as $fn) {
-                if ($fn === '.' || $fn === '..' || isset($known[$fn])) continue;
-                $fp = ATTACH_DIR . '/' . $fn;
-                if (!is_file($fp)) continue;
-                if (time() - filemtime($fp) < ORPHAN_GRACE_SECONDS) { $skipped++; continue; }
-                $bytes += filesize($fp);
-                if (@unlink($fp)) $removed++;
-            }
+            $known = knownAttachmentNames($db);
+            [$removed, $bytes, $skipped, $capped] = purgeOrphanFiles(ATTACH_DIR, $known, ['.htaccess' => true, '.stats_cache' => true]);
             logModeration('maint_clean', 'system', 0, "Вложения без записей: удалено файлов — $removed");
-            setFlashMessage('success', "Удалено осиротевших вложений: $removed (" . round($bytes / 1048576, 1) . " МБ)" . ($skipped ? ", пропущено свежих: $skipped" : ''));
+            setFlashMessage('success', "Удалено осиротевших вложений: $removed (" . round($bytes / 1048576, 1) . " МБ)"
+                . ($skipped ? ", пропущено свежих: $skipped" : '')
+                . ($capped ? '. Достигнут лимит за прогон — повторите операцию.' : ''));
             break;
 
         case 'orphan_avatars':
-            // Файлы аватаров, на которые никто не ссылается (старше grace-периода)
             $dir = __DIR__ . '/../assets/uploads/avatars';
             $known = [];
-            foreach ($db->query("SELECT avatar FROM users WHERE avatar IS NOT NULL")->fetchAll(PDO::FETCH_COLUMN) as $path) {
-                $known[basename($path)] = true;
+            $lastId = 0;
+            while (true) {
+                $st = $db->prepare("SELECT id, avatar FROM users WHERE id > ? AND avatar IS NOT NULL ORDER BY id ASC LIMIT 5000");
+                $st->execute([$lastId]);
+                $rows = $st->fetchAll();
+                if (!$rows) break;
+                foreach ($rows as $r) { $known[basename($r['avatar'])] = true; $lastId = (int)$r['id']; }
             }
-            $removed = 0; $bytes = 0; $skipped = 0;
-            foreach (@scandir($dir) ?: [] as $fn) {
-                if ($fn === '.' || $fn === '..' || isset($known[$fn])) continue;
-                $fp = $dir . '/' . $fn;
-                if (!is_file($fp)) continue;
-                if (time() - filemtime($fp) < ORPHAN_GRACE_SECONDS) { $skipped++; continue; }
-                $bytes += filesize($fp);
-                if (@unlink($fp)) $removed++;
-            }
+            [$removed, $bytes, $skipped, $capped] = purgeOrphanFiles($dir, $known);
             logModeration('maint_clean', 'system', 0, "Аватары без ссылок: удалено файлов — $removed");
-            setFlashMessage('success', "Удалено неиспользуемых аватаров: $removed (" . round($bytes / 1048576, 1) . " МБ)" . ($skipped ? ", пропущено свежих: $skipped" : ''));
+            setFlashMessage('success', "Удалено неиспользуемых аватаров: $removed (" . round($bytes / 1048576, 1) . " МБ)"
+                . ($skipped ? ", пропущено свежих: $skipped" : '')
+                . ($capped ? '. Достигнут лимит за прогон — повторите операцию.' : ''));
             break;
 
         default:
@@ -118,9 +160,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // ===== Журнал модерации с фильтрами =====
-$fAction = trim($_GET['action'] ?? '');
-$fUser   = (int)($_GET['user'] ?? 0);
-$fTarget = $_GET['target'] ?? '';
+$fAction = trim(getStr('action'));
+$fUser   = getInt('user');
+$fTarget = getStr('target');
 if (!in_array($fTarget, ['topic','post','user','forum','category','system'], true)) $fTarget = '';
 
 $where = []; $params = [];
@@ -130,7 +172,7 @@ if ($fTarget !== '') { $where[] = 'l.target_type = ?'; $params[] = $fTarget; }
 $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
 $perPage = max(1, setting('per_page_staff', 15));
-$page = max(1, (int)($_GET['page'] ?? 1));
+$page = max(1, getInt('page', 1));
 
 $st = $db->prepare("SELECT COUNT(*) FROM moderation_log l $whereSql");
 $st->execute($params);
@@ -153,11 +195,9 @@ $log = $st->fetchAll();
 $actionNames = moderationActionNames();
 $targetNames = ['topic' => 'Тема', 'post' => 'Сообщение', 'user' => 'Пользователь', 'forum' => 'Раздел', 'category' => 'Категория', 'system' => 'Система'];
 
-// Список действий для фильтра — из реальных записей
 $usedActions = $db->query("SELECT DISTINCT action FROM moderation_log ORDER BY action")->fetchAll(PDO::FETCH_COLUMN);
 $staffUsers = $db->query("SELECT id, username FROM users WHERE role IN ('moderator','admin') ORDER BY username")->fetchAll();
 
-// Размеры таблиц обслуживания
 $sizes = [
     'rate_limits'   => (int)$db->query("SELECT COUNT(*) FROM rate_limits")->fetchColumn(),
     'search_log'    => (int)$db->query("SELECT COUNT(*) FROM search_log")->fetchColumn(),
@@ -185,6 +225,7 @@ adminOpen('maintenance');
     </div>
     <div class="admin-card">
         <h3>Очистка данных</h3>
+        <p class="admin-muted">Регулярная чистка выполняется автоматически через install/cron.php; кнопки ниже — для ручного запуска.</p>
         <form method="POST" class="admin-clean-row js-confirm-maint">
             <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
             <input type="hidden" name="op" value="clean_orphan_records">
@@ -224,7 +265,7 @@ adminOpen('maintenance');
     </div>
     <div class="admin-card">
         <h3>Осиротевшие файлы</h3>
-        <p class="admin-muted">Файлы на диске без ссылок в БД: сбои загрузки, ручные удаления, удаление пользователей (FK-каскад стирает записи attachments, файлы остаются). Файлы моложе 1 часа не удаляются — защита от гонок с текущими загрузками.</p>
+        <p class="admin-muted">Файлы на диске без ссылок в БД. Файлы моложе 1 часа не удаляются. За прогон удаляется не более <?= ORPHAN_MAX_PER_RUN ?> файлов — при большом объёме повторите операцию.</p>
         <form method="POST" class="inline-form js-confirm-maint">
             <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
             <input type="hidden" name="op" value="orphan_attachments">

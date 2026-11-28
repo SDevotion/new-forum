@@ -1,4 +1,14 @@
 <?php
+// admin/settings.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [6.ranges] Диапазоны берутся из settingsRanges() (includes/settings.php) —
+//       локальный дубль удалён; неизвестный int-ключ не фаталит ($ranges[$key]).
+// [6.clamped] $clamped инициализируется всегда (не только в else-ветке).
+// [5.5] settingsSet() атомарен (часть 1) — ошибка записи показывает алерт,
+//       а не полу-сохранённый конфиг.
+// [6.массовый 500] Ввод через postStr()/getStr(); attach_types фильтруется is_string.
+
 require_once __DIR__ . '/../includes/permissions.php';
 requireAdmin();
 require_once __DIR__ . '/_layout.php';
@@ -6,45 +16,21 @@ require_once __DIR__ . '/_layout.php';
 $pageTitle = 'Настройки';
 
 $tabs = ['general' => 'Основные', 'content' => 'Контент', 'pagination' => 'Пагинация', 'uploads' => 'Вложения', 'limits' => 'Лимиты'];
-$tab = $_GET['tab'] ?? 'general';
+$tab = getStr('tab', 'general');
 if (!isset($tabs[$tab])) $tab = 'general';
 
-// Диапазоны валидации числовых настроек: key => [min, max]
-$ranges = [
-    'title_min' => [1, 200],   'title_max' => [5, 200],
-    'topic_min' => [1, 20000], 'reply_min' => [1, 20000],
-    'message_max' => [100, 100000],
-    'report_min' => [1, 500],  'report_max' => [10, 500],
-    'password_min' => [4, 128],
-    'bio_max' => [50, 5000],   'location_max' => [10, 100],
-    'website_max' => [20, 255], 'signature_max' => [20, 500],
-    'search_min' => [1, 10],   'search_max' => [10, 200],
-    'edit_window_hours' => [0, 8760],
-    'per_page_topics' => [1, 100], 'per_page_posts' => [1, 100],
-    'per_page_search' => [1, 100], 'per_page_members' => [1, 100],
-    'per_page_notifications' => [1, 100], 'per_page_autocomplete' => [1, 20],
-    'per_page_staff' => [1, 100],
-    'attach_max_files' => [0, 20], 'attach_max_size_mb' => [1, 64],
-    'avatar_max_size_mb' => [1, 16],
-    'rl_login_max' => [1, 100],    'rl_login_window' => [60, 86400],
-    'rl_register_max' => [1, 100], 'rl_register_window' => [60, 86400],
-    'rl_topic_max' => [1, 100],    'rl_topic_window' => [60, 86400],
-    'rl_reply_max' => [1, 100],    'rl_reply_window' => [60, 86400],
-    'rl_report_max' => [1, 100],   'rl_report_window' => [60, 86400],
-    'rl_edit_max' => [1, 200],     'rl_edit_window' => [60, 86400],
-    'online_window' => [60, 7200],
-    'rl_forgot_max' => [1, 20], 'rl_forgot_window' => [60, 86400],
-];
+$ranges = settingsRanges();
+$clamped = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
+    if (!verifyCSRFToken(postStr('csrf_token'))) {
         setFlashMessage('error', 'Недействительный запрос');
         redirect('/admin/settings.php?tab=' . $tab);
     }
 
     $kv = [];
     if ($tab === 'general') {
-        $msg = trim($_POST['forum_closed_message'] ?? '');
+        $msg = trim(postStr('forum_closed_message'));
         if (mb_strlen($msg) > 255) $msg = mb_substr($msg, 0, 255);
         if ($msg === '') $msg = 'Форум временно закрыт для новых сообщений';
         $kv = [
@@ -59,26 +45,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $allowedGroups = array_keys(attachTypeCatalog());
             $picked = $_POST['attach_types'] ?? [];
             if (!is_array($picked)) $picked = [];
+            $picked = array_filter($picked, 'is_string');
             $kv['attach_types'] = array_values(array_intersect($allowedGroups, $picked));
         }
         $keys = array_keys(array_filter(settingsDefaults(), fn($d) => $d[2] === $tab && $d[0] === 'int'));
-        $clamped = [];
         foreach ($keys as $key) {
-            if (!isset($_POST[$key])) continue;
+            if (!isset($_POST[$key]) || !is_scalar($_POST[$key])) continue;
             $val = (int)$_POST[$key];
-            [$min, $max] = $ranges[$key];
+            [$min, $max] = settingsRange($key);
             $fixed = max($min, min($max, $val));
             if ($fixed !== $val) $clamped[] = $key . ' → ' . $fixed . ' (допустимо ' . $min . '–' . $max . ')';
             $kv[$key] = $fixed;
         }
-        // Согласованность пар min/max
         if (isset($kv['title_min'], $kv['title_max']) && $kv['title_min'] > $kv['title_max']) $kv['title_min'] = $kv['title_max'];
         if (isset($kv['report_min'], $kv['report_max']) && $kv['report_min'] > $kv['report_max']) $kv['report_min'] = $kv['report_max'];
         if (isset($kv['search_min'], $kv['search_max']) && $kv['search_min'] > $kv['search_max']) $kv['search_min'] = $kv['search_max'];
     }
 
-    $changed = settingsSet($kv);
-    $clampNote = !empty($clamped) ? ' Значения вне диапазона скорректированы: ' . implode('; ', $clamped) . '.' : '';
+    try {
+        $changed = settingsSet($kv);
+    } catch (Throwable $e) {
+        setFlashMessage('error', 'Не удалось сохранить настройки (изменения откатаны). Попробуйте снова.');
+        redirect('/admin/settings.php?tab=' . $tab);
+    }
+
+    $clampNote = $clamped ? ' Значения вне диапазона скорректированы: ' . implode('; ', $clamped) . '.' : '';
     if ($changed) {
         $labelsMap = settingLabels();
         $changedLabels = array_map(fn($k) => $labelsMap[$k] ?? $k, $changed);
@@ -90,7 +81,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect('/admin/settings.php?tab=' . $tab);
 }
 
-// Подписи числовых полей: key => [label, hint]
 $labels = [
     'title_min' => ['Заголовок темы: минимум', 'символов'],
     'title_max' => ['Заголовок темы: максимум', 'символов (лимит БД — 200)'],
@@ -162,7 +152,7 @@ adminOpen('general');
             </label>
             <label class="admin-check">
                 <input type="checkbox" name="email_notifications" value="1" <?= setting('email_notifications', false) ? 'checked' : '' ?>>
-                <span>Email-уведомления об ответах и упоминаниях (требуется настроенная почта в config)</span>
+                <span>Email-уведомления об ответах и упоминаниях (доставка через cron: install/cron.php)</span>
             </label>
             <div class="form-group">
                 <label for="closedMsg">Сообщение о закрытии</label>
@@ -190,7 +180,7 @@ adminOpen('general');
             <h3><?= $tabs[$tab] ?></h3>
             <div class="admin-grid">
                 <?php foreach ($labels as $key => [$label, $hint]): ?>
-                    <?php if (settingsDefaults()[$key][2] !== $tab) continue; [$min, $max] = $ranges[$key]; ?>
+                    <?php if (settingsDefaults()[$key][2] !== $tab) continue; [$min, $max] = settingsRange($key); ?>
                     <div class="form-group">
                         <label for="set_<?= $key ?>"><?= $label ?></label>
                         <input type="number" id="set_<?= $key ?>" name="<?= $key ?>" class="form-control"

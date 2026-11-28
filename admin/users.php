@@ -1,4 +1,11 @@
 <?php
+// admin/users.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [6.массовый 500] Ввод через getStr()/getInt(): ?q[]=x / ?role[]=x / ?page[]=x
+//       больше не валят страницу TypeError'ом.
+// Логика страницы не менялась.
+
 require_once __DIR__ . '/../includes/permissions.php';
 require_once __DIR__ . '/_layout.php';
 
@@ -7,10 +14,10 @@ $db = Database::getInstance()->getConnection();
 $me = getCurrentUser();
 require_once __DIR__ . '/../includes/pagination.php';
 
-$q = trim($_GET['q'] ?? '');
-$roleFilter = $_GET['role'] ?? '';
+$q = trim(getStr('q'));
+$roleFilter = getStr('role');
 $perPage = max(1, setting('per_page_staff', 15));
-$page = max(1, (int)($_GET['page'] ?? 1));
+$page = max(1, getInt('page', 1));
 $offset = ($page - 1) * $perPage;
 
 $where = [];

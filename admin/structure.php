@@ -1,4 +1,11 @@
 <?php
+// admin/structure.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [6.массовый 500] Весь ввод через postStr()/postInt(). Критично: toggle/delete
+//       читали (int)$_POST['id'] БЕЗ ?? — массив в id давал фатал даже в оригинале.
+// Логика управления структурой не менялась.
+
 require_once __DIR__ . '/../includes/permissions.php';
 require_once __DIR__ . '/../includes/counters.php';
 require_once __DIR__ . '/_layout.php';
@@ -8,15 +15,15 @@ $db = Database::getInstance()->getConnection();
 $errors = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
+    if (!verifyCSRFToken(postStr('csrf_token'))) {
         $errors[] = 'Недействительный запрос';
     } else {
-        $action = $_POST['action'] ?? '';
+        $action = postStr('action');
         try {
             if ($action === 'add_category') {
-                $title = trim($_POST['title'] ?? '');
-                $desc = trim($_POST['description'] ?? '');
-                $sort = (int)($_POST['sort_order'] ?? 0);
+                $title = trim(postStr('title'));
+                $desc = trim(postStr('description'));
+                $sort = postInt('sort_order');
                 if (mb_strlen($title) < 2 || mb_strlen($title) > 100) {
                     $errors[] = 'Название категории: 2–100 символов';
                 } else {
@@ -28,10 +35,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
             } elseif ($action === 'edit_category') {
-                $id = (int)($_POST['id'] ?? 0);
-                $title = trim($_POST['title'] ?? '');
-                $desc = trim($_POST['description'] ?? '');
-                $sort = (int)($_POST['sort_order'] ?? 0);
+                $id = postInt('id');
+                $title = trim(postStr('title'));
+                $desc = trim(postStr('description'));
+                $sort = postInt('sort_order');
                 if (mb_strlen($title) < 2 || mb_strlen($title) > 100) {
                     $errors[] = 'Название категории: 2–100 символов';
                 } else {
@@ -43,11 +50,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
             } elseif ($action === 'add_forum') {
-                $cat = (int)($_POST['category_id'] ?? 0);
-                $title = trim($_POST['title'] ?? '');
-                $desc = trim($_POST['description'] ?? '');
-                $icon = trim($_POST['icon'] ?? '💬');
-                $sort = (int)($_POST['sort_order'] ?? 0);
+                $cat = postInt('category_id');
+                $title = trim(postStr('title'));
+                $desc = trim(postStr('description'));
+                $icon = trim(postStr('icon', '💬'));
+                $sort = postInt('sort_order');
 
                 $stmt = $db->prepare("SELECT id FROM categories WHERE id = ?");
                 $stmt->execute([$cat]);
@@ -65,12 +72,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
             } elseif ($action === 'edit_forum') {
-                $id = (int)($_POST['id'] ?? 0);
-                $cat = (int)($_POST['category_id'] ?? 0);
-                $title = trim($_POST['title'] ?? '');
-                $desc = trim($_POST['description'] ?? '');
-                $icon = trim($_POST['icon'] ?? '💬');
-                $sort = (int)($_POST['sort_order'] ?? 0);
+                $id = postInt('id');
+                $cat = postInt('category_id');
+                $title = trim(postStr('title'));
+                $desc = trim(postStr('description'));
+                $icon = trim(postStr('icon', '💬'));
+                $sort = postInt('sort_order');
 
                 $st = $db->prepare("SELECT category_id FROM forums WHERE id = ?");
                 $st->execute([$id]);
@@ -86,8 +93,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } else {
                     $db->prepare("UPDATE forums SET category_id = ?, title = ?, description = ?, icon = ?, sort_order = ? WHERE id = ?")
                        ->execute([$cat, $title, $desc ?: null, mb_substr($icon, 0, 10), $sort, $id]);
-                    // При смене категории счётчики обеих не меняются (темы остаются в разделе),
-                    // но на всякий случай пересчитаем затронутый раздел.
                     recountForum($id);
                     logModeration('forum_edit', 'forum', $id, $title);
                     setFlashMessage('success', 'Раздел обновлён');
@@ -95,21 +100,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
             } elseif ($action === 'toggle_category') {
-                $id = (int)$_POST['id'];
+                $id = postInt('id');
                 $db->prepare("UPDATE categories SET is_active = 1 - is_active WHERE id = ?")->execute([$id]);
                 logModeration('category_toggle', 'category', $id);
                 setFlashMessage('success', 'Видимость категории изменена');
                 redirect('/admin/structure.php');
 
             } elseif ($action === 'toggle_forum') {
-                $id = (int)$_POST['id'];
+                $id = postInt('id');
                 $db->prepare("UPDATE forums SET is_active = 1 - is_active WHERE id = ?")->execute([$id]);
                 logModeration('forum_toggle', 'forum', $id);
                 setFlashMessage('success', 'Видимость раздела изменена');
                 redirect('/admin/structure.php');
 
             } elseif ($action === 'delete_category') {
-                $id = (int)$_POST['id'];
+                $id = postInt('id');
                 $stmt = $db->prepare("SELECT COUNT(*) FROM forums WHERE category_id = ?");
                 $stmt->execute([$id]);
                 if ((int)$stmt->fetchColumn() > 0) {
@@ -122,7 +127,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
             } elseif ($action === 'delete_forum') {
-                $id = (int)$_POST['id'];
+                $id = postInt('id');
                 $stmt = $db->prepare("SELECT COUNT(*) FROM topics WHERE forum_id = ?");
                 $stmt->execute([$id]);
                 if ((int)$stmt->fetchColumn() > 0) {
@@ -219,7 +224,6 @@ adminOpen('structure');
             </div>
         </div>
 
-        <!-- Редактирование категории -->
         <details class="admin-edit-details">
             <summary class="btn-link">✏️ Редактировать категорию</summary>
             <form method="POST" class="admin-inline-edit">

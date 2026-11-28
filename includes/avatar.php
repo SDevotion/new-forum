@@ -1,29 +1,41 @@
 <?php
-/**
- * URL аватара пользователя
- */
+// includes/avatar.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [2.3] Единый строгий regex пути аватара для avatarUrl()/deleteAvatarFile():
+//       /assets/uploads/avatars/u{id}_{16hex}.{jpg|png|gif|webp} — разные правила
+//       валидации (is_file vs префикс) устранены; произвольная строка из БД
+//       никогда не попадёт в src.
+// [6.avatarReencode] Лимит декомпрессионной бомбы снижен: 4000×4000 и 8 Мпикс
+//       (для аватара достаточно; ~32 МБ RAM worst case вместо ~200 МБ).
+// [new] tmp-файл перекодирования получает расширение .tmp и гарантированно
+//       удаляется при любом исходе (try/finally-паттерн).
+// EXIF-поворот и fail-closed без GD — сохранены.
+
+/** Строгий формат пути аватара. */
+function avatarPathValid($path) {
+    return is_string($path)
+        && preg_match('#^/assets/uploads/avatars/u\d+_[a-f0-9]{16}\.(jpg|png|gif|webp)$#', $path) === 1;
+}
+
 function avatarUrl($path) {
-    if (!empty($path) && is_file(__DIR__ . '/../' . ltrim($path, '/'))) {
+    if (avatarPathValid($path) && is_file(__DIR__ . '/../' . ltrim($path, '/'))) {
         return escape($path);
     }
     return '/assets/images/default-avatar.svg';
 }
 
-/**
- * Перекодирование изображения через GD: убирает EXIF/GPS и любые
- * не-пиксельные данные. Возвращает путь к очищенному файлу или null.
- */
 function avatarReencode($srcPath, $mime, $dstPath) {
     if (!function_exists('imagecreatefromstring')) {
-        error_log('avatarReencode: GD недоступен, EXIF не вычищается');
+        error_log('avatarReencode: GD недоступен');
         return null;
     }
     $data = @file_get_contents($srcPath);
     if ($data === false) return null;
     $img = @imagecreatefromstring($data);
+    unset($data);
     if ($img === false) return null;
 
-    // Поворот по EXIF Orientation ДО его удаления (JPEG с телефонов)
     if ($mime === 'image/jpeg' && function_exists('exif_read_data')) {
         $exif = @exif_read_data($srcPath);
         if (!empty($exif['Orientation'])) {
@@ -50,38 +62,28 @@ function avatarReencode($srcPath, $mime, $dstPath) {
 }
 
 /**
- * Обработка загрузки аватара
  * @return array [success(bool), message(string), path(?string)]
  */
 function handleAvatarUpload($file, $userId) {
     if (!isset($file['error']) || $file['error'] === UPLOAD_ERR_NO_FILE) {
-        return [true, '', null]; // файл не выбран — не ошибка
+        return [true, '', null];
     }
-
     if ($file['error'] !== UPLOAD_ERR_OK) {
         return [false, 'Ошибка загрузки файла (код ' . (int)$file['error'] . ')', null];
     }
 
     $avatarMaxMb = max(1, setting('avatar_max_size_mb', 2));
-    if ($file['size'] > $avatarMaxMb * 1024 * 1024) {
+    if (!is_string($file['tmp_name'] ?? null) || !is_uploaded_file($file['tmp_name'])) {
+        return [false, 'Некорректная загрузка файла', null];
+    }
+    $realSize = @filesize($file['tmp_name']);
+    if ($realSize === false || $realSize <= 0 || $realSize > $avatarMaxMb * 1024 * 1024) {
         return [false, 'Файл слишком большой. Максимум ' . $avatarMaxMb . ' МБ', null];
     }
 
-    if (!is_uploaded_file($file['tmp_name'])) {
-        return [false, 'Некорректная загрузка файла', null];
-    }
-
-    // Реальный тип файла, а не расширение
     $finfo = new finfo(FILEINFO_MIME_TYPE);
     $mime = $finfo->file($file['tmp_name']);
-
-    $allowed = [
-        'image/jpeg' => 'jpg',
-        'image/png'  => 'png',
-        'image/gif'  => 'gif',
-        'image/webp' => 'webp',
-    ];
-
+    $allowed = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/gif' => 'gif', 'image/webp' => 'webp'];
     if (!isset($allowed[$mime])) {
         return [false, 'Допустимы только JPG, PNG, GIF, WEBP', null];
     }
@@ -90,9 +92,12 @@ function handleAvatarUpload($file, $userId) {
     if ($info === false) {
         return [false, 'Файл не является изображением', null];
     }
-    // Защита от декомпрессионных бомб: не более 5000x5000 и 25 Мпикс
-    if ($info[0] > 5000 || $info[1] > 5000 || ($info[0] * $info[1]) > 25000000) {
-        return [false, 'Слишком большое разрешение (максимум 5000×5000)', null];
+    if ($info[0] > 4000 || $info[1] > 4000 || ($info[0] * $info[1]) > 8000000) {
+        return [false, 'Слишком большое разрешение (максимум 4000×4000, 8 Мпикс)', null];
+    }
+
+    if (!function_exists('imagecreatefromstring')) {
+        return [false, 'Загрузка аватаров временно недоступна (нет GD на сервере)', null];
     }
 
     $dir = __DIR__ . '/../assets/uploads/avatars';
@@ -103,37 +108,26 @@ function handleAvatarUpload($file, $userId) {
     $ext = $allowed[$mime];
     $name = 'u' . (int)$userId . '_' . bin2hex(random_bytes(8)) . '.' . $ext;
     $target = $dir . '/' . $name;
+    $tmpClean = $dir . '/tmp_' . bin2hex(random_bytes(8)) . '.tmp';
 
-    // Перекодирование обязательно: исходник может содержать EXIF/GPS.
-    // Без GD загрузку отклоняем (fail-closed), а не сохраняем оригинал.
-    if (!function_exists('imagecreatefromstring')) {
-        return [false, 'Загрузка аватаров временно недоступна (нет GD на сервере)', null];
-    }
-    $tmpClean = $dir . '/tmp_' . bin2hex(random_bytes(8));
-    $clean = avatarReencode($file['tmp_name'], $mime, $tmpClean);
-
-    if ($clean === null) {
-        @unlink($tmpClean);
-        return [false, 'Не удалось обработать изображение. Попробуйте другой файл.', null];
-    }
-    if (!rename($tmpClean, $target)) {
-        @unlink($tmpClean);
-        return [false, 'Не удалось сохранить файл', null];
+    try {
+        $clean = avatarReencode($file['tmp_name'], $mime, $tmpClean);
+        if ($clean === null) {
+            return [false, 'Не удалось обработать изображение. Попробуйте другой файл.', null];
+        }
+        if (!rename($tmpClean, $target)) {
+            return [false, 'Не удалось сохранить файл', null];
+        }
+    } finally {
+        if (is_file($tmpClean)) @unlink($tmpClean);
     }
     @unlink($file['tmp_name']);
 
     return [true, '', '/assets/uploads/avatars/' . $name];
 }
 
-/**
- * Удаление старого файла аватара
- */
 function deleteAvatarFile($path) {
-    if (empty($path)) return;
-    if (strpos($path, '/assets/uploads/avatars/') !== 0) return;
-
+    if (!avatarPathValid($path)) return;
     $full = __DIR__ . '/../' . ltrim($path, '/');
-    if (is_file($full)) {
-        @unlink($full);
-    }
+    if (is_file($full)) @unlink($full);
 }

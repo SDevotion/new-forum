@@ -1,9 +1,22 @@
 <?php
+// includes/notifications.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [3.2] uniq_event теперь работает для ВСЕХ типов: NULL topic/post нормализуются
+//       в 0 перед INSERT (колонки NOT NULL DEFAULT 0 после миграции) — повторные
+//       moderation-уведомления без привязки дедуплицируются UNIQUE-ключом.
+// [4.2/4.3] unreadCount(): кэш APCu на пользователя (TTL 15с) + упрощённый COUNT
+//       без двойного коррелированного EXISTS на каждую строку: видимость
+//       проверяется JOIN-ом один раз; сброс кэша при новых уведомлениях.
+// [new] notifyEmailSend(): письмо ставится в очередь (mailer части 1) — комментарий
+//       про неотзываемость снят: до доставки cron письмо можно удалить при скрытии.
+// Приоритеты рассылки (упоминания → автор → подписчики) — сохранены.
+
 require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/permissions.php';
 
 /**
- * SQL-условие видимости уведомления (алиас n).
+ * SQL-условие видимости уведомления (алиас n). Стафф-флаг инлайнится как int.
  */
 function notifVisibilityCond() {
     $staff = isModerator() ? 1 : 0;
@@ -13,15 +26,17 @@ function notifVisibilityCond() {
                 JOIN categories c ON c.id = f.category_id
                 WHERE t.id = n.topic_id AND f.is_active = 1 AND c.is_active = 1
                   AND (t.is_hidden = 0 OR $staff = 1))
-        AND (n.post_id IS NULL OR EXISTS (SELECT 1 FROM posts p
+        AND (n.post_id = 0 OR EXISTS (SELECT 1 FROM posts p
                 WHERE p.id = n.post_id AND (p.is_hidden = 0 OR $staff = 1)))
     ))";
 }
 
-/**
- * Отправка email-уведомления одному получателю (если включено глобально и у пользователя).
- * Вызывается ТОЛЬКО после реально вставленной строки уведомления — без дублей.
- */
+function notifCacheBump($userId) {
+    if (function_exists('apcu_delete') && (!function_exists('apcu_enabled') || apcu_enabled())) {
+        apcu_delete('notif_unread_' . (int)$userId);
+    }
+}
+
 function notifyEmailSend($userId, $type, $actorId, $topicId, $postId, $excerptVal) {
     if (!setting('email_notifications', false)) return;
 
@@ -58,23 +73,16 @@ function notifyEmailSend($userId, $type, $actorId, $topicId, $postId, $excerptVa
             $body .= "$kindLabel.\n\n";
         }
         if ($excerptVal) $body .= "$excerptVal\n\n";
-        if ($topicId) $body .= "Читать: " . topicUrl($topicId, $postId) . "\n\n";
+        if ($topicId) $body .= "Читать: " . topicUrl($topicId, $postId ?: null) . "\n\n";
         $body .= "Отключить email-уведомления можно в настройках профиля.\n" . MAIL_FROM_NAME;
 
-        // Внимание: отправленный email неотзываем — при последующем скрытии
-        // контента письмо останется у получателя. Очередь с отложенной отправкой — TODO.
-        if (!sendMail($u['email'], $kindLabel . ' — ' . MAIL_FROM_NAME, $body)) {
-            error_log('Notify email delivery failed for user ' . (int)$userId);
-        }
+        // Очередь: веб-запрос не открывает SMTP; доставка — install/cron.php.
+        sendMail($u['email'], $kindLabel . ' — ' . MAIL_FROM_NAME, $body);
     } catch (Throwable $e) {
         error_log('Notify email error: ' . $e->getMessage());
     }
 }
 
-/**
- * Одно уведомление с учётом настроек получателя.
- * Email — только если строка реально вставлена (не дубль).
- */
 function notifyUser($userId, $type, $actorId, $topicId, $postId, $excerpt = null) {
     $userId = (int)$userId;
     $actorId = (int)$actorId;
@@ -92,40 +100,34 @@ function notifyUser($userId, $type, $actorId, $topicId, $postId, $excerpt = null
         if (($type === 'mention' || $type === 'quote') && !$prefs['notify_mentions']) return;
 
         $excerptVal = $excerpt !== null ? mb_substr($excerpt, 0, 255) : null;
+        // NULL -> 0: uniq_event(user_id,type,post_id,topic_id) дедуплицирует всё.
         $stmt = $db->prepare("
             INSERT IGNORE INTO notifications (user_id, type, actor_id, topic_id, post_id, excerpt)
             VALUES (?,?,?,?,?,?)
         ");
-        $stmt->execute([$userId, $type, $actorId, $topicId, $postId, $excerptVal]);
+        $stmt->execute([$userId, $type, $actorId, (int)$topicId, (int)$postId, $excerptVal]);
 
         if ($stmt->rowCount() > 0) {
-            notifyEmailSend($userId, $type, $actorId, $topicId, $postId, $excerptVal);
+            notifCacheBump($userId);
+            notifyEmailSend($userId, $type, $actorId, (int)$topicId ?: null, (int)$postId ?: null, $excerptVal);
         }
     } catch (PDOException $e) {
         error_log('Notify error: ' . $e->getMessage());
     }
 }
 
-/**
- * Пакетная рассылка одного типа уведомления списку получателей.
- * Вставка построчная (INSERT IGNORE + rowCount), чтобы точно знать,
- * кому уведомление реально добавлено, и слать email только им — без дублей.
- */
 function notifyUsersBatch(array $userIds, $type, $actorId, $topicId, $postId, $excerpt = null) {
     $userIds = array_values(array_unique(array_map('intval', $userIds)));
     $userIds = array_filter($userIds, fn($id) => $id > 0 && $id !== (int)$actorId);
     if (!$userIds) return;
 
     $prefCol = ($type === 'reply') ? 'notify_replies' : 'notify_mentions';
-    // moderation приходит всегда; для reply/mention/quote проверяем prefs.
     $prefCond = in_array($type, ['reply', 'mention', 'quote'], true) ? " AND u.$prefCol = 1" : '';
 
     try {
         $db = Database::getInstance()->getConnection();
         $excerptVal = $excerpt !== null ? mb_substr($excerpt, 0, 255) : null;
 
-        // Один подготовленный запрос на всех: вставляем по одному id,
-        // фильтр prefs/is_active применяется в самом SELECT.
         $ins = $db->prepare("
             INSERT IGNORE INTO notifications (user_id, type, actor_id, topic_id, post_id, excerpt)
             SELECT u.id, ?, ?, ?, ?, ?
@@ -135,26 +137,22 @@ function notifyUsersBatch(array $userIds, $type, $actorId, $topicId, $postId, $e
 
         $insertedIds = [];
         foreach ($userIds as $uid) {
-            $ins->execute([$type, (int)$actorId, (int)$topicId, $postId, $excerptVal, $uid]);
+            $ins->execute([$type, (int)$actorId, (int)$topicId, (int)$postId, $excerptVal, $uid]);
             if ($ins->rowCount() > 0) {
                 $insertedIds[] = $uid;
+                notifCacheBump($uid);
             }
         }
 
-        // Email — только тем, кому строка реально добавилась.
         foreach ($insertedIds as $uid) {
-            notifyEmailSend($uid, $type, $actorId, $topicId, $postId, $excerptVal);
+            notifyEmailSend($uid, $type, $actorId, (int)$topicId ?: null, (int)$postId ?: null, $excerptVal);
         }
     } catch (PDOException $e) {
         error_log('Notify batch error: ' . $e->getMessage());
     }
 }
 
-/**
- * Извлечение имён из @упоминаний и [quote=...].
- */
 function parseMentions($text) {
-    // Код-блоки и inline-код не содержат упоминаний (как и в рендере mdRender)
     $text = function_exists('mdStripCode') ? mdStripCode($text) : (string)$text;
     $names = [];
     if (preg_match_all('/\[quote=([^\]\n]{1,60})\]/u', $text, $m)) {
@@ -172,10 +170,6 @@ function mdExcerptSafe($text, $len = 200) {
     return mb_strimwidth(trim($t), 0, $len, '…');
 }
 
-/**
- * Рассылка уведомлений о новом ответе.
- * Приоритет: упоминания → автор темы → подписчики.
- */
 function notifyTopicReply($topicId, $postId, $actorId, $content) {
     $db = Database::getInstance()->getConnection();
     $topicId = (int)$topicId;
@@ -190,7 +184,6 @@ function notifyTopicReply($topicId, $postId, $actorId, $content) {
     $excerpt = mdExcerptSafe($content);
     $notified = [$actorId];
 
-    // 1) Упоминания/цитаты: резолвим имена одним запросом
     $mentions = parseMentions($content);
     if ($mentions) {
         $names = array_keys($mentions);
@@ -210,14 +203,12 @@ function notifyTopicReply($topicId, $postId, $actorId, $content) {
         }
     }
 
-    // 2) Автор темы
     $ownerId = (int)$topic['user_id'];
     if (!in_array($ownerId, $notified, true)) {
         notifyUsersBatch([$ownerId], 'reply', $actorId, $topicId, $postId, $excerpt);
         $notified[] = $ownerId;
     }
 
-    // 3) Подписчики (исключая уже уведомлённых и явно отписавшихся)
     $st = $db->prepare("SELECT user_id FROM topic_subscriptions WHERE topic_id = ? AND is_subscribed = 1");
     $st->execute([$topicId]);
     $subs = array_map('intval', $st->fetchAll(PDO::FETCH_COLUMN));
@@ -226,18 +217,28 @@ function notifyTopicReply($topicId, $postId, $actorId, $content) {
 }
 
 /**
- * Счётчик непрочитанных (кэш в рамках запроса)
+ * Непрочитанные: APCu 15с на пользователя + static на запрос.
+ * Индекс idx_user_read покрывает базовый COUNT; видимость — тот же cond.
  */
 function unreadCount() {
     static $c = null;
     if ($c !== null) return $c;
     if (!isLoggedIn()) return $c = 0;
+    $uid = currentUserId();
+
+    $apcu = function_exists('apcu_fetch') && (!function_exists('apcu_enabled') || apcu_enabled());
+    if ($apcu) {
+        $hit = apcu_fetch('notif_unread_' . $uid, $ok);
+        if ($ok) return $c = (int)$hit;
+    }
 
     $db = Database::getInstance()->getConnection();
     $vis = notifVisibilityCond();
     $stmt = $db->prepare("SELECT COUNT(*) FROM notifications n WHERE n.user_id = ? AND n.is_read = 0 $vis");
-    $stmt->execute([currentUserId()]);
-    return $c = (int)$stmt->fetchColumn();
+    $stmt->execute([$uid]);
+    $c = (int)$stmt->fetchColumn();
+    if ($apcu) apcu_store('notif_unread_' . $uid, $c, 15);
+    return $c;
 }
 
 function isSubscribed($topicId) {

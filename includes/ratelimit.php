@@ -1,13 +1,18 @@
 <?php
 // includes/ratelimit.php
-// Лимитер частоты действий: атомарный (GET_LOCK), с поддержкой доверенных прокси.
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [1.6] rateLimitRefund(): откат списанной квоты, если действие subsequently
+//       отклонено бизнес-проверками (reply/create вызывают его при закрытой теме,
+//       невалидных вложениях и т.п.) — невалидные попытки больше не жгут лимит.
+// [2.8] loginPairCheck()/loginPairClear(): парный логин-лимит вынесен из
+//       auth/login.php в общий атомарный хелпер (тот же GET_LOCK-паттерн).
+// [new] rateLimitConsume() — вариант check+refund одним вызовом не нужен,
+//       но добавлен rateLimitPeek(): проверка БЕЗ списания (для превью ошибок).
+// IP/прокси-логика без изменений (была корректной).
 
 require_once __DIR__ . '/functions.php';
 
-/**
- * Клиентский IP. X-Forwarded-For учитывается ТОЛЬКО если REMOTE_ADDR входит
- * в TRUSTED_PROXIES (config/database.php). Берём самый правый недоверенный адрес.
- */
 function rateLimitIp() {
     $remote = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
     $trusted = defined('TRUSTED_PROXIES') ? TRUSTED_PROXIES : [];
@@ -23,7 +28,6 @@ function rateLimitIp() {
 
     $xff = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '';
     $chain = array_values(array_filter(array_map('trim', explode(',', $xff))));
-    // Идём справа налево: первый адрес, не являющийся доверенным прокси, — клиент.
     for ($i = count($chain) - 1; $i >= 0; $i--) {
         $ip = $chain[$i];
         if (!filter_var($ip, FILTER_VALIDATE_IP)) return $remote;
@@ -32,19 +36,14 @@ function rateLimitIp() {
     return $remote;
 }
 
-/**
- * Ключ лимитера: user_id для залогиненных, иначе IP; $byIp — всегда IP.
- */
 function rateLimitKey($byIp = false) {
     $uid = $byIp ? 0 : currentUserId();
     return $uid > 0 ? 'u' . $uid : 'ip' . rateLimitIp();
 }
 
 /**
- * Проверка лимита: не более $max событий за $windowSeconds.
- * Атомарно: DELETE+COUNT+INSERT под именованным локом MySQL, параллельные
- * запросы одного ключа сериализуются и не могут «проскочить» лимит.
- * Возвращает true, если действие РАЗРЕШЕНО (и записывает попытку).
+ * Проверка лимита со списанием попытки. Атомарно под GET_LOCK.
+ * Если действие потом отклонено — вызовите rateLimitRefund().
  */
 function rateLimitCheck($action, $max, $windowSeconds, $byIp = false) {
     $db = Database::getInstance()->getConnection();
@@ -52,53 +51,90 @@ function rateLimitCheck($action, $max, $windowSeconds, $byIp = false) {
     $ip  = rateLimitIp();
 
     $lockName = 'rl:' . md5($action . '|' . $key);
-    $got = $db->prepare("SELECT GET_LOCK(?, 3)");
+    $got = $db->prepare('SELECT GET_LOCK(?, 3)');
     $got->execute([$lockName]);
-    if ((int)$got->fetchColumn() !== 1) {
-        // Лок не получен (перегрузка) — fail closed для чувствительных действий.
-        return false;
-    }
+    if ((int)$got->fetchColumn() !== 1) return false; // fail closed
 
     try {
-        $stmt = $db->prepare("DELETE FROM rate_limits WHERE action = ? AND actor_key = ? AND created_at < (NOW() - INTERVAL ? SECOND)");
+        $stmt = $db->prepare('DELETE FROM rate_limits WHERE action = ? AND actor_key = ? AND created_at < (NOW() - INTERVAL ? SECOND)');
         $stmt->execute([$action, $key, $windowSeconds]);
 
-        $stmt = $db->prepare("SELECT COUNT(*) FROM rate_limits WHERE action = ? AND actor_key = ?");
+        $stmt = $db->prepare('SELECT COUNT(*) FROM rate_limits WHERE action = ? AND actor_key = ?');
         $stmt->execute([$action, $key]);
-        if ((int)$stmt->fetchColumn() >= $max) {
-            return false;
-        }
+        if ((int)$stmt->fetchColumn() >= $max) return false;
 
-        $stmt = $db->prepare("INSERT INTO rate_limits (action, actor_key, ip_address) VALUES (?, ?, ?)");
+        $stmt = $db->prepare('INSERT INTO rate_limits (action, actor_key, ip_address) VALUES (?, ?, ?)');
         $stmt->execute([$action, $key, $ip]);
+        // Запоминаем id последней записи для точечного refund
+        $GLOBALS['__rl_last'][$action . '|' . $key] = (int)$db->lastInsertId();
         return true;
     } finally {
-        $rel = $db->prepare("SELECT RELEASE_LOCK(?)");
-        $rel->execute([$lockName]);
+        $db->prepare('SELECT RELEASE_LOCK(?)')->execute([$lockName]);
     }
 }
 
-/**
- * Сброс попыток конкретного ключа (например, после успешного входа).
- * ВАЖНО: не сбрасывайте весь IP-ключ — это позволяло обходить брутфорс-лимит,
- * логинясь в свой аккаунт между попытками перебора чужого.
- */
-function rateLimitClear($action, $key) {
-    $db = Database::getInstance()->getConnection();
-    $db->prepare("DELETE FROM rate_limits WHERE action = ? AND actor_key = ?")->execute([$action, $key]);
+/** Возврат одной списанной попытки (действие отклонено бизнес-логикой). */
+function rateLimitRefund($action, $byIp = false) {
+    $key = rateLimitKey($byIp);
+    $id = $GLOBALS['__rl_last'][$action . '|' . $key] ?? 0;
+    if ($id <= 0) return;
+    unset($GLOBALS['__rl_last'][$action . '|' . $key]);
+    try {
+        Database::getInstance()->getConnection()
+            ->prepare('DELETE FROM rate_limits WHERE id = ? AND action = ? AND actor_key = ?')
+            ->execute([$id, $action, $key]);
+    } catch (PDOException $e) { /* не критично */ }
 }
 
-/**
- * Сколько секунд ждать до следующей попытки.
- */
+/** Проверка БЕЗ списания (показать «подождите N минут» до валидации). */
+function rateLimitPeek($action, $max, $windowSeconds, $byIp = false) {
+    $db = Database::getInstance()->getConnection();
+    $key = rateLimitKey($byIp);
+    $stmt = $db->prepare('SELECT COUNT(*) FROM rate_limits WHERE action = ? AND actor_key = ? AND created_at >= (NOW() - INTERVAL ? SECOND)');
+    $stmt->execute([$action, $key, $windowSeconds]);
+    return (int)$stmt->fetchColumn() < $max;
+}
+
+function rateLimitClear($action, $key) {
+    Database::getInstance()->getConnection()
+        ->prepare('DELETE FROM rate_limits WHERE action = ? AND actor_key = ?')
+        ->execute([$action, $key]);
+}
+
 function rateLimitRetryAfter($action, $windowSeconds, $byIp = false) {
     $db = Database::getInstance()->getConnection();
     $key = rateLimitKey($byIp);
-
-    $stmt = $db->prepare("
+    $stmt = $db->prepare('
         SELECT TIMESTAMPDIFF(SECOND, NOW(), MIN(created_at) + INTERVAL ? SECOND)
         FROM rate_limits WHERE action = ? AND actor_key = ?
-    ");
+    ');
     $stmt->execute([$windowSeconds, $action, $key]);
     return max(1, (int)$stmt->fetchColumn());
+}
+
+/**
+ * Парный логин-лимит (IP + введённый логин), атомарно.
+ * Возвращает true и списывает попытку, либо false (лимит исчерпан).
+ */
+function loginPairCheck($pairKey, $max, $windowSeconds) {
+    $db = Database::getInstance()->getConnection();
+    $lockName = 'rl:' . md5('login_pair|' . $pairKey);
+    $got = $db->prepare('SELECT GET_LOCK(?, 3)');
+    $got->execute([$lockName]);
+    if ((int)$got->fetchColumn() !== 1) return false;
+    try {
+        $db->prepare("DELETE FROM rate_limits WHERE action = 'login_pair' AND actor_key = ? AND created_at < (NOW() - INTERVAL ? SECOND)")
+           ->execute([$pairKey, $windowSeconds]);
+        $st = $db->prepare("SELECT COUNT(*) FROM rate_limits WHERE action = 'login_pair' AND actor_key = ?");
+        $st->execute([$pairKey]);
+        if ((int)$st->fetchColumn() >= $max) return false;
+        $db->prepare("INSERT INTO rate_limits (action, actor_key, ip_address) VALUES ('login_pair', ?, ?)")
+           ->execute([$pairKey, rateLimitIp()]);
+        return true;
+    } finally {
+        $db->prepare('SELECT RELEASE_LOCK(?)')->execute([$lockName]);
+    }
+}
+function loginPairClear($pairKey) {
+    rateLimitClear('login_pair', $pairKey);
 }

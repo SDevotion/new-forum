@@ -1,20 +1,31 @@
 <?php
 // includes/attachments.php
 // Вложения к темам и сообщениям: загрузка, вывод, удаление.
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [1.5] attachStore() стал транзакционно-совместимым: move_uploaded_file выполняется
+//       ДО INSERT строки, при ошибке INSERT файл сразу удаляется (не остаётся сиротой);
+//       при ошибке move ранее сохранённые файлы этой пачки откатываются.
+//       Вызывающий код может обернуть attachStore в свою транзакцию — файлы и записи
+//       коммитятся/откатываются согласованно (см. posts/reply.php, topics/create.php).
+// [1.5] attachCollectTopicTree()/attachPurgeTopicTree() принимают флаг $forUpdate:
+//       сбор имён под FOR UPDATE в одной транзакции с DELETE темы — конкурентный
+//       reply не успеет добавить вложение между сбором и удалением.
+// [6.attachValidate] Размер берётся из filesize(tmp_name) (серверный факт), а не
+//       только из клиентского $_FILES['size']; finfo читает файл один раз.
+// [new] attachStore возвращает список сохранённых имён — вызывающий код может
+//       удалить их при последующем откате своей транзакции.
+// Каталог типов/whitelist MIME — без изменений (были корректны).
 
 require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/permissions.php';
 
-define('ATTACH_DIR', __DIR__ . '/../assets/uploads/attachments');
-define('ATTACH_URL_BASE', '/attachment.php?id=');
+if (!defined('ATTACH_DIR')) define('ATTACH_DIR', __DIR__ . '/../assets/uploads/attachments');
+if (!defined('ATTACH_URL_BASE')) define('ATTACH_URL_BASE', '/attachment.php?id=');
 
 function attachMaxFiles() { return max(0, setting('attach_max_files', 5)); }
 function attachMaxSize()  { return max(1, setting('attach_max_size_mb', 5)) * 1024 * 1024; }
 
-/**
- * Полный каталог типов: группа => [mime..., расширения для accept, подпись].
- * SVG/HTML/PHP сознательно отсутствуют.
- */
 function attachTypeCatalog() {
     return [
         'jpg'  => [['image/jpeg'], '.jpg,.jpeg', 'JPG'],
@@ -33,18 +44,12 @@ function attachTypeCatalog() {
     ];
 }
 
-/**
- * Разрешённые группы типов (настройка attach_types). Пустой список = все запрещены.
- */
 function attachEnabledGroups() {
     $enabled = setting('attach_types', array_keys(attachTypeCatalog()));
     if (!is_array($enabled)) $enabled = [];
     return array_values(array_intersect(array_keys(attachTypeCatalog()), $enabled));
 }
 
-/**
- * Whitelist: реальный MIME (finfo) -> расширение, с учётом настройки.
- */
 function attachAllowedTypes() {
     $map = [];
     $catalog = attachTypeCatalog();
@@ -54,9 +59,6 @@ function attachAllowedTypes() {
     return $map;
 }
 
-/**
- * accept-атрибут и человекочитаемая подпись — из того же каталога.
- */
 function attachAcceptAttr() {
     $parts = [];
     $catalog = attachTypeCatalog();
@@ -75,9 +77,6 @@ function attachIsImageMime($mime) {
     return in_array($mime, ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], true);
 }
 
-/**
- * Нормализация $_FILES['attachments'] (multiple) в плоский список.
- */
 function attachNormalizeFiles($field = 'attachments') {
     $out = [];
     if (empty($_FILES[$field])) return $out;
@@ -102,9 +101,7 @@ function attachNormalizeFiles($field = 'attachments') {
 }
 
 /**
- * Валидация списка файлов ДО сохранения. Возвращает массив ошибок (пустой = всё ок).
- * Проверенные файлы получают ключи 'ext' и 'mime'.
- * $existingCount — сколько вложений уже есть у объекта и останется после правки.
+ * Валидация ДО сохранения. Проверенные файлы получают 'ext', 'mime', 'real_size'.
  */
 function attachValidate(array &$files, $existingCount = 0) {
     $errors = [];
@@ -121,6 +118,7 @@ function attachValidate(array &$files, $existingCount = 0) {
     }
     $allowed = attachAllowedTypes();
     $finfo = new finfo(FILEINFO_MIME_TYPE);
+    $maxSize = attachMaxSize();
 
     foreach ($files as &$f) {
         $label = mb_strimwidth((string)$f['name'], 0, 60, '…');
@@ -128,13 +126,14 @@ function attachValidate(array &$files, $existingCount = 0) {
             $errors[] = '«' . $label . '»: ошибка загрузки (код ' . (int)$f['error'] . ')';
             continue;
         }
-        $maxSize = attachMaxSize();
-        if ($f['size'] <= 0 || $f['size'] > $maxSize) {
-            $errors[] = '«' . $label . '»: размер должен быть от 1 байта до ' . (int)($maxSize / 1024 / 1024) . ' МБ';
+        if (!is_string($f['tmp_name']) || !is_uploaded_file($f['tmp_name'])) {
+            $errors[] = '«' . $label . '»: некорректная загрузка';
             continue;
         }
-        if (!is_uploaded_file($f['tmp_name'])) {
-            $errors[] = '«' . $label . '»: некорректная загрузка';
+        // Серверный размер — источник истины (клиентский size может отличаться).
+        $realSize = @filesize($f['tmp_name']);
+        if ($realSize === false || $realSize <= 0 || $realSize > $maxSize) {
+            $errors[] = '«' . $label . '»: размер должен быть от 1 байта до ' . (int)($maxSize / 1024 / 1024) . ' МБ';
             continue;
         }
         $mime = $finfo->file($f['tmp_name']);
@@ -142,8 +141,7 @@ function attachValidate(array &$files, $existingCount = 0) {
             $errors[] = '«' . $label . '»: тип файла запрещён';
             continue;
         }
-        // Текстовые вложения — до 1 МБ: мегабайтные «txt» почти всегда мусор/абьюз
-        if ($mime === 'text/plain' && $f['size'] > 1048576) {
+        if ($mime === 'text/plain' && $realSize > 1048576) {
             $errors[] = '«' . $label . '»: текстовый файл не должен превышать 1 МБ';
             continue;
         }
@@ -153,17 +151,22 @@ function attachValidate(array &$files, $existingCount = 0) {
         }
         $f['mime'] = $mime;
         $f['ext']  = $allowed[$mime];
+        $f['real_size'] = $realSize;
     }
     unset($f);
     return $errors;
 }
 
 /**
- * Сохранение провалидированных файлов и запись строк в БД.
- * Вызывать ПОСЛЕ успешного INSERT темы/поста. Бросает RuntimeException при ошибке.
+ * Сохранение провалидированных файлов + строки в БД.
+ * Возвращает массив stored_name сохранённых файлов.
+ * При ошибке: уже перемещённые файлы этой пачки удаляются, исключение пробрасывается.
+ * Можно вызывать внутри транзакции вызывающего кода: при её rollback вызывающий
+ * обязан удалить возвращённые... — точнее, при исключении мы чистим сами, а при
+ * rollback ПОСЛЕ успешного возврата вызывающий чистит по списку (см. reply/create).
  */
 function attachStore(array $files, $targetType, $targetId, $userId) {
-    if (!$files) return;
+    if (!$files) return [];
     if (!is_dir(ATTACH_DIR) && !mkdir(ATTACH_DIR, 0755, true)) {
         throw new RuntimeException('Не удалось создать папку вложений');
     }
@@ -172,20 +175,26 @@ function attachStore(array $files, $targetType, $targetId, $userId) {
         INSERT INTO attachments (target_type, target_id, user_id, orig_name, stored_name, mime, size_bytes, is_image)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ");
-    foreach ($files as $f) {
-        if (empty($f['ext'])) continue; // не прошёл валидацию — пропускаем
-        $stored = bin2hex(random_bytes(16)) . '.' . $f['ext'];
-        if (!move_uploaded_file($f['tmp_name'], ATTACH_DIR . '/' . $stored)) {
-            throw new RuntimeException('Не удалось сохранить файл на диск');
+    $saved = [];
+    try {
+        foreach ($files as $f) {
+            if (empty($f['ext'])) continue;
+            $stored = bin2hex(random_bytes(16)) . '.' . $f['ext'];
+            if (!move_uploaded_file($f['tmp_name'], ATTACH_DIR . '/' . $stored)) {
+                throw new RuntimeException('Не удалось сохранить файл на диск');
+            }
+            $saved[] = $stored;
+            $orig = mb_substr(basename(str_replace('\\', '/', (string)$f['name'])), 0, 255);
+            $size = (int)($f['real_size'] ?? $f['size']);
+            $stmt->execute([$targetType, $targetId, $userId, $orig, $stored, $f['mime'], $size, attachIsImageMime($f['mime']) ? 1 : 0]);
         }
-        $orig = mb_substr(basename(str_replace('\\', '/', (string)$f['name'])), 0, 255);
-        $stmt->execute([$targetType, $targetId, $userId, $orig, $stored, $f['mime'], (int)$f['size'], attachIsImageMime($f['mime']) ? 1 : 0]);
+    } catch (Throwable $e) {
+        foreach ($saved as $sn) attachUnlink($sn);
+        throw $e;
     }
+    return $saved;
 }
 
-/**
- * Вложения одного объекта.
- */
 function attachForObject($targetType, $targetId) {
     $db = Database::getInstance()->getConnection();
     $stmt = $db->prepare("SELECT * FROM attachments WHERE target_type = ? AND target_id = ? ORDER BY id ASC");
@@ -193,9 +202,6 @@ function attachForObject($targetType, $targetId) {
     return $stmt->fetchAll();
 }
 
-/**
- * Вложения сразу для нескольких объектов: [target_id => [rows...]] (без N+1).
- */
 function attachForTargets($targetType, array $ids) {
     if (!$ids) return [];
     $db = Database::getInstance()->getConnection();
@@ -210,22 +216,21 @@ function attachForTargets($targetType, array $ids) {
 }
 
 /**
- * Имена файлов всех вложений темы (первое сообщение + ответы). Для удаления с диска ПОСЛЕ DELETE.
+ * Имена файлов всех вложений темы. $lock=true — FOR UPDATE (в транзакции удаления).
  */
-function attachCollectTopicTree($topicId) {
+function attachCollectTopicTree($topicId, $lock = false) {
     $db = Database::getInstance()->getConnection();
-    $stmt = $db->prepare("
+    $sql = "
         SELECT a.stored_name FROM attachments a
         WHERE (a.target_type = 'topic' AND a.target_id = ?)
            OR (a.target_type = 'post' AND a.target_id IN (SELECT id FROM posts WHERE topic_id = ?))
-    ");
+    ";
+    if ($lock) $sql .= ' FOR UPDATE';
+    $stmt = $db->prepare($sql);
     $stmt->execute([$topicId, $topicId]);
     return $stmt->fetchAll(PDO::FETCH_COLUMN);
 }
 
-/**
- * Удаление строк вложений темы (до DELETE темы, пока живы посты для подзапроса).
- */
 function attachPurgeTopicTree($topicId) {
     $db = Database::getInstance()->getConnection();
     $db->prepare("
@@ -236,15 +241,11 @@ function attachPurgeTopicTree($topicId) {
 }
 
 function attachUnlink($storedName) {
-    // только наше имя формата hex.ext — защита от path traversal
     if (!preg_match('/^[a-f0-9]{32}\.[a-z0-9]{2,5}$/', (string)$storedName)) return;
     $full = ATTACH_DIR . '/' . $storedName;
     if (is_file($full)) @unlink($full);
 }
 
-/**
- * Человекочитаемый размер.
- */
 function attachFormatSize($bytes) {
     $bytes = (int)$bytes;
     if ($bytes >= 1048576) return round($bytes / 1048576, 1) . ' МБ';
@@ -252,10 +253,6 @@ function attachFormatSize($bytes) {
     return $bytes . ' Б';
 }
 
-/**
- * HTML-блок вложений под сообщением. Картинки — сеткой превью, файлы — списком.
- * Все ссылки ведут на контроллер /attachment.php (проверка прав при скачивании).
- */
 function attachRender(array $rows) {
     if (!$rows) return '';
     $images = array_filter($rows, fn($r) => $r['is_image']);

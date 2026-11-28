@@ -1,12 +1,15 @@
 <?php
+// includes/editing.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [3.5/приоритет#10] getRevisions() получила обязательный фильтр видимости:
+//       параметр $includeHidden=false по умолчанию; скрытые ревизии отдаются
+//       только при явном true (вызывающий обязан проверить isModerator()).
+//       Мёртвый небезопасный API устранён — первый же вызов не сольёт скрытые версии.
+// canEdit/saveRevision — без изменений (были корректны).
+
 require_once __DIR__ . '/permissions.php';
 
-/**
- * Может ли текущий пользователь редактировать объект.
- * Модератор — всегда. Автор — в течение окна edit_window_hours,
- * но НЕ скрытый модератором объект и НЕ в закрытой теме.
- * $flags: ['is_hidden' => bool, 'topic_closed' => bool] (опционально).
- */
 function canEdit($ownerId, $createdAt, array $flags = []) {
     $u = getCurrentUser();
     if (!$u) return false;
@@ -19,10 +22,6 @@ function canEdit($ownerId, $createdAt, array $flags = []) {
     return (time() - strtotime($createdAt)) <= $limit;
 }
 
-/**
- * Сохранение версии перед правкой.
- * Храним последние 100 версий объекта — защита от разрастания истории.
- */
 function saveRevision($type, $id, $oldTitle, $oldContent, $reason = null, $hidden = false) {
     $u = getCurrentUser();
     if (!$u) return;
@@ -33,7 +32,6 @@ function saveRevision($type, $id, $oldTitle, $oldContent, $reason = null, $hidde
     ");
     $stmt->execute([$type, $id, $u['id'], $oldTitle, $oldContent, $reason ? mb_substr($reason, 0, 255) : null, $hidden ? 1 : 0]);
 
-    // Подчищаем самые старые версии сверх лимита
     $db->prepare("
         DELETE FROM post_edits
         WHERE target_type = ? AND target_id = ?
@@ -49,15 +47,19 @@ function saveRevision($type, $id, $oldTitle, $oldContent, $reason = null, $hidde
 }
 
 /**
- * Список правок объекта
+ * Список правок объекта.
+ * $includeHidden=true допустимо ТОЛЬКО после проверки isModerator() вызывающим.
+ * По умолчанию скрытые версии исключаются — безопасный дефолт.
  */
-function getRevisions($type, $id) {
+function getRevisions($type, $id, $includeHidden = false) {
+    if ($includeHidden && !isModerator()) $includeHidden = false; // двойная страховка
     $db = Database::getInstance()->getConnection();
+    $vis = $includeHidden ? '' : ' AND e.is_hidden = 0';
     $stmt = $db->prepare("
         SELECT e.*, u.username, u.avatar
         FROM post_edits e
         JOIN users u ON u.id = e.editor_id
-        WHERE e.target_type = ? AND e.target_id = ?
+        WHERE e.target_type = ? AND e.target_id = ?$vis
         ORDER BY e.created_at DESC, e.id DESC
     ");
     $stmt->execute([$type, $id]);

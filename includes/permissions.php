@@ -1,4 +1,11 @@
 <?php
+// includes/permissions.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [4.2] newReportsCount(): APCu-кэш 30с — COUNT по reports не выполняется
+//       на каждый рендер каждой страницы у каждого модератора.
+// Остальное без изменений.
+
 require_once __DIR__ . '/functions.php';
 
 function isModerator() {
@@ -29,9 +36,6 @@ function logModeration($action, $targetType, $targetId, $reason = null) {
     $stmt->execute([$u['id'], $action, $targetType, $targetId, $reason ? mb_substr($reason, 0, 255) : null]);
 }
 
-/**
- * Человекочитаемые названия действий модерации (единый словарь).
- */
 function moderationActionNames() {
     return [
         'topic_pin_on' => 'Закрепление темы', 'topic_pin_off' => 'Открепление темы',
@@ -52,15 +56,10 @@ function moderationActionNames() {
     ];
 }
 
-/**
- * Причина записи журнала в читаемом виде.
- * Переводит и новые записи, и легаси с техническими ключами.
- */
 function moderationReasonLabel($reason) {
     $reason = trim((string)$reason);
     if ($reason === '') return '';
 
-    // Легаси-форматы обслуживания: "rate_limits: 5", "orphan avatars: 1", ...
     $legacy = [
         'rate_limits'        => 'Лимитеры частоты: удалено записей — ',
         'search_log'         => 'Журнал поиска: удалено записей — ',
@@ -89,7 +88,6 @@ function moderationReasonLabel($reason) {
         return 'Новая роль: ' . ['user' => 'Участник', 'moderator' => 'Модератор', 'admin' => 'Администратор'][$reason];
     }
 
-    // settings_update: список ключей -> подписи (легаси)
     if (preg_match('/^[a-z0-9_]+(, [a-z0-9_]+)*$/u', $reason)) {
         $labels = settingLabels();
         $parts = array_map('trim', explode(',', $reason));
@@ -104,9 +102,6 @@ function moderationReasonLabel($reason) {
     return $reason;
 }
 
-/**
- * Подписи ключей настроек для журнала.
- */
 function settingLabels() {
     return [
         'forum_closed' => 'Форум закрыт', 'forum_closed_message' => 'Сообщение о закрытии',
@@ -140,9 +135,15 @@ function settingLabels() {
 
 function newReportsCount() {
     static $c = null;
-    if ($c === null) {
-        $db = Database::getInstance()->getConnection();
-        $c = (int)$db->query("SELECT COUNT(*) FROM reports WHERE status = 'new'")->fetchColumn();
+    if ($c !== null) return $c;
+
+    $apcu = function_exists('apcu_fetch') && (!function_exists('apcu_enabled') || apcu_enabled());
+    if ($apcu) {
+        $hit = apcu_fetch('forum_new_reports', $ok);
+        if ($ok) return $c = (int)$hit;
     }
+    $db = Database::getInstance()->getConnection();
+    $c = (int)$db->query("SELECT COUNT(*) FROM reports WHERE status = 'new'")->fetchColumn();
+    if ($apcu) apcu_store('forum_new_reports', $c, 30);
     return $c;
 }

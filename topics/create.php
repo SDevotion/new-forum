@@ -1,4 +1,13 @@
 <?php
+// topics/create.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [1.6-паттерн] Лимитер списывается ПОСЛЕ валидации заголовка/текста/вложений;
+//       отклонённая форма возвращает квоту (rateLimitRefund).
+// [1.5] attachStore внутри транзакции создания темы; при rollback файлы удаляются.
+// [6.массовый 500] Ввод через postStr()/getInt()/postInt(); forum_id только из GET/POST int.
+// Уведомления об упоминаниях первого сообщения, автоподписка — сохранены.
+
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/permissions.php';
 require_once __DIR__ . '/../includes/notifications.php';
@@ -19,7 +28,7 @@ if (setting('forum_closed', false) && !isModerator()) {
 
 $db = Database::getInstance()->getConnection();
 $currentUser = getCurrentUser();
-$forumId = (int)($_REQUEST['forum_id'] ?? 0);
+$forumId = $_SERVER['REQUEST_METHOD'] === 'POST' ? postInt('forum_id') : getInt('forum_id');
 
 $stmt = $db->prepare("
     SELECT f.*, c.title AS category_title
@@ -41,13 +50,11 @@ $title = '';
 $content = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
+    if (!verifyCSRFToken(postStr('csrf_token'))) {
         $errors[] = 'Недействительный запрос. Попробуйте снова.';
-    } elseif (!rateLimitCheck('topic_create', max(1, setting('rl_topic_max', 5)), max(60, setting('rl_topic_window', 600)))) {
-        $errors[] = 'Слишком часто создаёте темы. Подождите ' . ceil(rateLimitRetryAfter('topic_create', max(60, setting('rl_topic_window', 600))) / 60) . ' мин.';
     } else {
-        $title = trim($_POST['title'] ?? '');
-        $content = trim($_POST['content'] ?? '');
+        $title = trim(postStr('title'));
+        $content = trim(postStr('content'));
 
         $titleMin = setting('title_min', 5);
         $titleMax = setting('title_max', 200);
@@ -59,7 +66,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif (mb_strlen($title) > $titleMax) {
             $errors[] = "Заголовок не должен превышать $titleMax символов";
         }
-
         if (mb_strlen($content) < $topicMin) {
             $errors[] = "Сообщение должно содержать минимум $topicMin символов";
         } elseif (mb_strlen($content) > $msgMax) {
@@ -69,26 +75,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $attachFiles = attachNormalizeFiles();
         $errors = array_merge($errors, attachValidate($attachFiles));
 
+        // Лимитер — только когда форма валидна.
         if (empty($errors)) {
+            $rlWindow = max(60, setting('rl_topic_window', 600));
+            if (!rateLimitCheck('topic_create', max(1, setting('rl_topic_max', 5)), $rlWindow)) {
+                $errors[] = 'Слишком часто создаёте темы. Подождите ' . ceil(rateLimitRetryAfter('topic_create', $rlWindow) / 60) . ' мин.';
+            }
+        }
+
+        if (empty($errors)) {
+            $savedFiles = [];
             try {
+                $db->beginTransaction();
                 $stmt = $db->prepare("
-                    INSERT INTO topics (forum_id, user_id, title, content, last_post_at) 
+                    INSERT INTO topics (forum_id, user_id, title, content, last_post_at)
                     VALUES (?, ?, ?, ?, NOW())
                 ");
                 $stmt->execute([$forumId, $currentUser['id'], $title, $content]);
-                $topicId = $db->lastInsertId();
+                $topicId = (int)$db->lastInsertId();
 
-                try {
-                    attachStore($attachFiles, 'topic', (int)$topicId, (int)$currentUser['id']);
-                } catch (Throwable $e) {
-                    error_log('Attach store error: ' . $e->getMessage());
-                    setFlashMessage('info', 'Тема создана, но часть вложений не удалось сохранить');
-                }
+                $savedFiles = attachStore($attachFiles, 'topic', $topicId, (int)$currentUser['id']);
+                $db->commit();
+            } catch (Throwable $e) {
+                if ($db->inTransaction()) $db->rollBack();
+                foreach ($savedFiles as $sn) attachUnlink($sn);
+                rateLimitRefund('topic_create');
+                error_log('Topic create error: ' . $e->getMessage());
+                $errors[] = 'Ошибка при создании темы. Попробуйте позже.';
+                $topicId = 0;
+            }
 
-                // Автор автоматически подписывается на свою тему
+            if (empty($errors)) {
                 subscribeTopic($currentUser['id'], $topicId);
 
-                // Уведомления об упоминаниях и цитатах в первом сообщении (батч)
                 $mentions = parseMentions($content);
                 if ($mentions) {
                     $names = array_keys($mentions);
@@ -103,15 +122,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $byKind[$kind][] = $uid;
                     }
                     foreach ($byKind as $kind => $ids) {
-                        if ($ids) notifyUsersBatch($ids, $kind, (int)$currentUser['id'], (int)$topicId, null, mdExcerpt($content));
+                        if ($ids) notifyUsersBatch($ids, $kind, (int)$currentUser['id'], $topicId, null, mdExcerpt($content));
                     }
                 }
 
                 setFlashMessage('success', 'Тема успешно создана!');
                 redirect('/topic.php?id=' . $topicId);
-            } catch (PDOException $e) {
-                error_log("Topic create error: " . $e->getMessage());
-                $errors[] = 'Ошибка при создании темы. Попробуйте позже.';
             }
         }
     }
@@ -148,14 +164,9 @@ require_once __DIR__ . '/../includes/header.php';
 
         <div class="form-group">
             <label for="title">Заголовок темы</label>
-            <input type="text"
-                   id="title"
-                   name="title"
-                   class="form-control"
-                   value="<?= escape($title) ?>"
-                   placeholder="Кратко и по сути"
-                   maxlength="<?= setting('title_max', 200) ?>"
-                   required>
+            <input type="text" id="title" name="title" class="form-control"
+                   value="<?= escape($title) ?>" placeholder="Кратко и по сути"
+                   maxlength="<?= setting('title_max', 200) ?>" required>
             <small class="form-hint">От <?= setting('title_min', 5) ?> до <?= setting('title_max', 200) ?> символов</small>
         </div>
 

@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Хост: localhost
--- Время создания: Ноя 26 2026 г., 20:35
+-- Время создания: Ноя 28 2026 г., 12:15
 -- Версия сервера: 8.4.11-11
 -- Версия PHP: 8.3.37
 
@@ -92,6 +92,25 @@ CREATE TABLE `forum_stats_daily` (
 -- --------------------------------------------------------
 
 --
+-- Структура таблицы `mail_queue`
+--
+
+CREATE TABLE `mail_queue` (
+  `id` int NOT NULL,
+  `to_email` varchar(100) NOT NULL,
+  `subject` varchar(255) NOT NULL,
+  `body` mediumtext NOT NULL,
+  `status` enum('pending','sent','failed') NOT NULL DEFAULT 'pending',
+  `attempts` tinyint NOT NULL DEFAULT '0',
+  `last_error` varchar(255) DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `next_try_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `sent_at` timestamp NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Структура таблицы `moderation_log`
 --
 
@@ -116,8 +135,8 @@ CREATE TABLE `notifications` (
   `user_id` int NOT NULL,
   `type` enum('reply','mention','quote','moderation') NOT NULL,
   `actor_id` int DEFAULT NULL,
-  `topic_id` int DEFAULT NULL,
-  `post_id` int DEFAULT NULL,
+  `topic_id` int NOT NULL DEFAULT '0',
+  `post_id` int NOT NULL DEFAULT '0',
   `excerpt` varchar(255) DEFAULT NULL,
   `is_read` tinyint(1) DEFAULT '0',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
@@ -378,6 +397,24 @@ CREATE TRIGGER `trg_stats_users` AFTER INSERT ON `users` FOR EACH ROW BEGIN
 END
 $$
 DELIMITER ;
+DELIMITER $$
+CREATE TRIGGER `trg_users_crosscheck_ins` BEFORE INSERT ON `users` FOR EACH ROW BEGIN
+    IF EXISTS (SELECT 1 FROM users WHERE email = NEW.username AND username <> NEW.username)
+       OR EXISTS (SELECT 1 FROM users WHERE username = NEW.email AND email <> NEW.email) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'cross username/email conflict';
+    END IF;
+END
+$$
+DELIMITER ;
+DELIMITER $$
+CREATE TRIGGER `trg_users_crosscheck_upd` BEFORE UPDATE ON `users` FOR EACH ROW BEGIN
+    IF EXISTS (SELECT 1 FROM users WHERE email = NEW.username AND id <> NEW.id)
+       OR EXISTS (SELECT 1 FROM users WHERE username = NEW.email AND id <> NEW.id) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'cross username/email conflict';
+    END IF;
+END
+$$
+DELIMITER ;
 
 -- --------------------------------------------------------
 
@@ -433,6 +470,13 @@ ALTER TABLE `forum_stats_daily`
   ADD PRIMARY KEY (`day`);
 
 --
+-- Индексы таблицы `mail_queue`
+--
+ALTER TABLE `mail_queue`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_status_try` (`status`,`next_try_at`);
+
+--
 -- Индексы таблицы `moderation_log`
 --
 ALTER TABLE `moderation_log`
@@ -450,7 +494,8 @@ ALTER TABLE `notifications`
   ADD KEY `actor_id` (`actor_id`),
   ADD KEY `topic_id` (`topic_id`),
   ADD KEY `post_id` (`post_id`),
-  ADD KEY `idx_user_read` (`user_id`,`is_read`,`created_at`);
+  ADD KEY `idx_user_read` (`user_id`,`is_read`,`created_at`),
+  ADD KEY `idx_user_type_read` (`user_id`,`is_read`,`type`);
 
 --
 -- Индексы таблицы `password_resets`
@@ -572,6 +617,12 @@ ALTER TABLE `forums`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT для таблицы `mail_queue`
+--
+ALTER TABLE `mail_queue`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT для таблицы `moderation_log`
 --
 ALTER TABLE `moderation_log`
@@ -664,9 +715,7 @@ ALTER TABLE `moderation_log`
 --
 ALTER TABLE `notifications`
   ADD CONSTRAINT `notifications_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `notifications_ibfk_2` FOREIGN KEY (`actor_id`) REFERENCES `users` (`id`) ON DELETE SET NULL,
-  ADD CONSTRAINT `notifications_ibfk_3` FOREIGN KEY (`topic_id`) REFERENCES `topics` (`id`) ON DELETE CASCADE,
-  ADD CONSTRAINT `notifications_ibfk_4` FOREIGN KEY (`post_id`) REFERENCES `posts` (`id`) ON DELETE CASCADE;
+  ADD CONSTRAINT `notifications_ibfk_2` FOREIGN KEY (`actor_id`) REFERENCES `users` (`id`) ON DELETE SET NULL;
 
 --
 -- Ограничения внешнего ключа таблицы `password_resets`

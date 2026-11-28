@@ -1,4 +1,12 @@
 <?php
+// posts/report.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [6.массовый 500] Ввод через postStr()/postInt(); back — safeBackUrl().
+// [1.6-паттерн] Дубль жалобы (uniq_report) возвращает квоту лимитера —
+//       повторный клик не жжёт лимит; ошибка INSERT тоже refund.
+// Порядок «проверки → лимитер» уже был правильным — сохранён.
+
 require_once __DIR__ . '/../includes/permissions.php';
 require_once __DIR__ . '/../includes/ratelimit.php';
 require_once __DIR__ . '/../includes/visibility.php';
@@ -6,13 +14,12 @@ require_once __DIR__ . '/../includes/visibility.php';
 if (!isLoggedIn()) { setFlashMessage('error', 'Необходимо войти'); redirect('/auth/login.php'); }
 enforceActiveUser();
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') redirect('/index.php');
-if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) { setFlashMessage('error', 'Недействительный запрос'); redirect('/index.php'); }
+if (!verifyCSRFToken(postStr('csrf_token'))) { setFlashMessage('error', 'Недействительный запрос'); redirect('/index.php'); }
 
-$type = ($_POST['target_type'] ?? '') === 'post' ? 'post' : 'topic';
-$id = (int)($_POST['target_id'] ?? 0);
-$reason = trim($_POST['reason'] ?? '');
-$back = $_POST['back'] ?? '/index.php';
-if (!preg_match('~^/(?![/\\\\])[A-Za-z0-9_./?=&#%-]*$~', $back)) $back = '/index.php';
+$type = postStr('target_type') === 'post' ? 'post' : 'topic';
+$id = postInt('target_id');
+$reason = trim(postStr('reason'));
+$back = safeBackUrl(postStr('back'), '/index.php');
 
 if ($id <= 0) { setFlashMessage('error', 'Объект не найден'); redirect($back); }
 
@@ -24,8 +31,6 @@ if (mb_strlen($reason) > $reportMax) { setFlashMessage('error', "Причина 
 $db = Database::getInstance()->getConnection();
 $u = getCurrentUser();
 
-// Видимость объекта: скрытые темы/посты и неактивные разделы не принимаются
-// (и не подтверждают своё существование). Единые правила из visibility.php.
 $visible = $type === 'post' ? postVisible($id) : topicVisible($id);
 if (!$visible) { setFlashMessage('error', 'Объект не найден'); redirect($back); }
 
@@ -39,7 +44,6 @@ if ((int)$targetObj['user_id'] === (int)$u['id']) {
     redirect($back);
 }
 
-// Лимитер — только после всех проверок, чтобы не тратить квоту на невалидные запросы
 if (!rateLimitCheck('report', max(1, setting('rl_report_max', 5)), max(60, setting('rl_report_window', 3600)))) {
     setFlashMessage('error', 'Слишком много жалоб за последнее время. Попробуйте позже.');
     redirect($back);
@@ -51,8 +55,10 @@ try {
     setFlashMessage('success', 'Жалоба отправлена модераторам');
 } catch (PDOException $e) {
     if ($e->getCode() == 23000) {
+        rateLimitRefund('report');
         setFlashMessage('info', 'Вы уже жаловались на этот объект');
     } else {
+        rateLimitRefund('report');
         error_log('Report error: ' . $e->getMessage());
         setFlashMessage('error', 'Ошибка при отправке жалобы');
     }

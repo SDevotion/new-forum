@@ -1,19 +1,27 @@
 <?php
+// posts/delete.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [6.мёртвый код] unset($_SESSION['last_post_hash']) удалён — легаси-ключ нигде
+//       не используется.
+// [1.5] Имена файлов вложений собираются ВНУТРИ транзакции (после SELECT поста
+//       FOR UPDATE) — конкурентная правка с добавлением вложения не оставит сироту.
+// [6.массовый 500] Ввод через postStr()/postInt().
+// Явные recount после DELETE (каскад без триггеров), журнал стафф-удаления — сохранены.
+
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/permissions.php';
 require_once __DIR__ . '/../includes/attachments.php';
 require_once __DIR__ . '/../includes/counters.php';
 
-$topicId = (int)($_POST['topic_id'] ?? 0);
-$postId = (int)($_POST['post_id'] ?? 0);
+$topicId = postInt('topic_id');
+$postId = postInt('post_id');
 $backUrl = '/topic.php?id=' . $topicId;
 
-if (!isLoggedIn()) {
-    redirect('/auth/login.php');
-}
+if (!isLoggedIn()) redirect('/auth/login.php');
 enforceActiveUser();
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !verifyCSRFToken($_POST['csrf_token'] ?? '')) {
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !verifyCSRFToken(postStr('csrf_token'))) {
     setFlashMessage('error', 'Недействительный запрос');
     redirect($backUrl);
 }
@@ -43,16 +51,29 @@ if (!$isOwner && !$isStaff) {
 }
 
 try {
-    $attachRows = attachForObject('post', $postId);
     $db->beginTransaction();
+
+    // Блокируем пост: параллельная правка/добавление вложений не проскочит.
+    $st = $db->prepare("SELECT id FROM posts WHERE id = ? FOR UPDATE");
+    $st->execute([$postId]);
+    if (!$st->fetch()) {
+        $db->rollBack();
+        setFlashMessage('info', 'Сообщение уже удалено');
+        redirect($backUrl);
+    }
+
+    $st = $db->prepare("SELECT stored_name FROM attachments WHERE target_type = 'post' AND target_id = ?");
+    $st->execute([$postId]);
+    $attachNames = $st->fetchAll(PDO::FETCH_COLUMN);
+
     $db->prepare("DELETE FROM attachments WHERE target_type = 'post' AND target_id = ?")->execute([$postId]);
     $db->prepare("DELETE FROM post_edits WHERE target_type = 'post' AND target_id = ?")->execute([$postId]);
     $db->prepare("DELETE FROM reports WHERE target_type = 'post' AND target_id = ?")->execute([$postId]);
     $db->prepare("DELETE FROM posts WHERE id = ?")->execute([$postId]);
     $db->commit();
-    foreach ($attachRows as $ar) attachUnlink($ar['stored_name']);
 
-    // Явный пересчёт (DELETE-триггеров больше нет).
+    foreach ($attachNames as $sn) attachUnlink($sn);
+
     recountTopic($topicId);
     recountForum((int)$post['forum_id']);
     recountUsers([(int)$post['user_id']]);
@@ -61,11 +82,10 @@ try {
         logModeration('post_delete', 'post', $postId, 'автор #' . (int)$post['user_id']);
     }
 
-    unset($_SESSION['last_post_hash'][$topicId]);
     setFlashMessage('success', 'Сообщение удалено');
 } catch (PDOException $e) {
     if ($db->inTransaction()) $db->rollBack();
-    error_log("Post delete error: " . $e->getMessage());
+    error_log('Post delete error: ' . $e->getMessage());
     setFlashMessage('error', 'Ошибка при удалении сообщения');
 }
 

@@ -1,4 +1,16 @@
 <?php
+// auth/register.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [1.1] Перекрёстные проверки занятости: ник нового юзера сверяется и с чужими
+//       EMAIL, а email — с чужими НИКАМИ. Сквоттинг «ник = чужой email» (который
+//       ломал вход жертве) невозможен на этапе регистрации.
+// [6.массовый 500] Ввод только через postStr(): массивы в полях не валят trim().
+// [1.6-паттерн] Отклонённая регистрация (занято/валидация) возвращает списанную
+//       попытку лимитера через rateLimitRefund() — опечатки не жгут квоту;
+//       успешная и honeypot — нет.
+// Honeypot и антиэнумерация сохранены.
+
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/ratelimit.php';
 
@@ -13,33 +25,33 @@ $username = '';
 $email = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
+    if (!verifyCSRFToken(postStr('csrf_token'))) {
         $errors[] = 'Недействительный запрос. Попробуйте снова.';
-    } elseif (!empty($_POST['website_url'])) {
-        // Honeypot: невидимое для людей поле. Бот заполнил — имитируем успех, ничего не создаём.
+    } elseif (postStr('website_url') !== '') {
+        // Honeypot: имитируем успех, ничего не создаём. Квоту не возвращаем.
         setFlashMessage('success', 'Регистрация успешна! Теперь вы можете войти.');
         redirect('/auth/login.php');
     } elseif (!rateLimitCheck('register', max(1, setting('rl_register_max', 3)), max(60, setting('rl_register_window', 3600)), true)) {
         $errors[] = 'Слишком много регистраций с вашего адреса. Попробуйте через час.';
     } else {
-        $username = trim($_POST['username'] ?? '');
-        $email = trim($_POST['email'] ?? '');
-        $password = $_POST['password'] ?? '';
-        $passwordConfirm = $_POST['password_confirm'] ?? '';
+        $username = trim(postStr('username'));
+        $email = trim(postStr('email'));
+        $password = postStr('password');
+        $passwordConfirm = postStr('password_confirm');
 
-        if (empty($username)) {
+        if ($username === '') {
             $errors[] = 'Введите имя пользователя';
         } elseif (!isValidUsername($username)) {
             $errors[] = 'Имя пользователя должно содержать 3-50 символов (латиница, цифры, _)';
         }
 
-        if (empty($email)) {
+        if ($email === '') {
             $errors[] = 'Введите email';
         } elseif (!isValidEmail($email) || mb_strlen($email) > 100) {
             $errors[] = 'Некорректный email';
         }
 
-        if (!is_string($password) || $password === '') {
+        if ($password === '') {
             $errors[] = 'Введите пароль';
         } elseif (mb_strlen($password) < setting('password_min', 6)) {
             $errors[] = 'Пароль должен содержать минимум ' . setting('password_min', 6) . ' символов';
@@ -54,8 +66,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (empty($errors)) {
             $db = Database::getInstance()->getConnection();
 
-            $stmt = $db->prepare("SELECT id FROM users WHERE username = ? OR email = ?");
-            $stmt->execute([$username, $email]);
+            // Прямые совпадения + ПЕРЕКРЁСТНЫЕ: ник против чужих email,
+            // email против чужих ников. Один запрос, четыре параметра.
+            $stmt = $db->prepare("
+                SELECT id FROM users
+                WHERE username = ? OR email = ? OR email = ? OR username = ?
+                LIMIT 1
+            ");
+            $stmt->execute([$username, $email, $username, $email]);
 
             if ($stmt->fetch()) {
                 // Нейтрально: не раскрываем, что именно занято (антиэнумерация).
@@ -67,10 +85,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $db = Database::getInstance()->getConnection();
             $passwordHash = password_hash($password, PASSWORD_DEFAULT);
 
-            $stmt = $db->prepare("INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)");
-
             try {
-                $stmt->execute([$username, $email, $passwordHash]);
+                $db->prepare("INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)")
+                   ->execute([$username, $email, $passwordHash]);
                 setFlashMessage('success', 'Регистрация успешна! Теперь вы можете войти.');
                 redirect('/auth/login.php');
             } catch (PDOException $e) {
@@ -82,6 +99,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $errors[] = 'Ошибка при регистрации. Попробуйте позже.';
                 }
             }
+        }
+
+        // Любая отклонённая попытка — возврат квоты лимитера.
+        if (!empty($errors)) {
+            rateLimitRefund('register', true);
         }
     }
 }

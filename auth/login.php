@@ -1,4 +1,19 @@
 <?php
+// auth/login.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [1.1/приоритет#1] Коллизия username↔email: поиск ДВУМЯ отдельными запросами —
+//       сначала точное совпадение username, затем email. fetch() первой попавшейся
+//       строки из "OR" больше нет: владелец аккаунта всегда входит по своему нику,
+//       даже если кто-то зарегистрировал ник, равный его email.
+// [2.8] Парный лимит вынесен в атомарный loginPairCheck()/loginPairClear()
+//       (includes/ratelimit.php) — дублирующий inline-код с GET_LOCK удалён.
+// [6.массовый 500] Весь ввод через postStr()/verifyCSRFToken(string-safe):
+//       username[]=x / password[]=x больше не валят страницу TypeError'ом.
+// [2.9] CSRF-пул сбрасывается через csrfReset() (легаси unset csrf_token удалён).
+// [new] При коллизии «ник одного = email другого» вход по спорной строке трактуется
+//       как username-вход (детерминированно), жертва не блокируется.
+
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/ratelimit.php';
 
@@ -14,64 +29,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $loginMax    = max(1, setting('rl_login_max', 5));
     $loginWindow = max(60, setting('rl_login_window', 900));
 
-    if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
+    if (!verifyCSRFToken(postStr('csrf_token'))) {
         $errors[] = 'Недействительный запрос. Попробуйте снова.';
     } elseif (!rateLimitCheck('login', max(20, $loginMax * 10), $loginWindow, true)) {
         $errors[] = 'Слишком много попыток входа. Подождите ' . ceil(rateLimitRetryAfter('login', $loginWindow, true) / 60) . ' мин. и попробуйте снова.';
     } else {
-        $username = trim($_POST['username'] ?? '');
-        $password = $_POST['password'] ?? '';
+        $username = trim(postStr('username'));
+        $password = postStr('password');
 
-        if (empty($username) || empty($password)) {
+        if ($username === '' || $password === '') {
             $errors[] = 'Заполните все поля';
-        } elseif (!is_string($password) || strlen($password) > 4096) {
-            $errors[] = 'Пароль слишком длинный';
+        } elseif (strlen($password) > 4096 || mb_strlen($username) > 100) {
+            $errors[] = 'Слишком длинные значения';
         } else {
-            $pairKey = 'ip' . rateLimitIp() . ':' . mb_strtolower(mb_substr($username, 0, 50));
+            $pairKey = 'ip' . rateLimitIp() . ':' . mb_strtolower(mb_substr($username, 0, 100));
             $db = Database::getInstance()->getConnection();
 
-            $lockName = 'rl:' . md5('login_pair|' . $pairKey);
-            $got = $db->prepare("SELECT GET_LOCK(?, 3)");
-            $got->execute([$lockName]);
-            $pairAllowed = false;
-            if ((int)$got->fetchColumn() === 1) {
-                $db->prepare("DELETE FROM rate_limits WHERE action = 'login_pair' AND actor_key = ? AND created_at < (NOW() - INTERVAL ? SECOND)")
-                   ->execute([$pairKey, $loginWindow]);
-                $st = $db->prepare("SELECT COUNT(*) FROM rate_limits WHERE action = 'login_pair' AND actor_key = ?");
-                $st->execute([$pairKey]);
-                if ((int)$st->fetchColumn() < max(5, $loginMax)) {
-                    $db->prepare("INSERT INTO rate_limits (action, actor_key, ip_address) VALUES ('login_pair', ?, ?)")
-                       ->execute([$pairKey, rateLimitIp()]);
-                    $pairAllowed = true;
-                }
-                $rel = $db->prepare("SELECT RELEASE_LOCK(?)");
-                $rel->execute([$lockName]);
-            }
-
-            if (!$pairAllowed) {
+            if (!loginPairCheck($pairKey, max(5, $loginMax), $loginWindow)) {
                 $errors[] = 'Слишком много попыток входа для этого аккаунта. Подождите ' . ceil($loginWindow / 60) . ' мин.';
             } else {
-                $stmt = $db->prepare("SELECT id, username, password_hash, is_active FROM users WHERE username = ? OR email = ?");
-                $stmt->execute([$username, $username]);
+                // Детерминированный поиск: username имеет приоритет над email.
+                // Никакого "OR ... fetch()" — первая строка не выбирается случайно.
+                $stmt = $db->prepare("SELECT id, username, password_hash, is_active FROM users WHERE username = ?");
+                $stmt->execute([$username]);
                 $user = $stmt->fetch();
 
-                // Против тайминг-энумерации: verify выполняется всегда,
-                // даже если пользователя нет (валидный фиктивный bcrypt-хэш).
+                if (!$user && isValidEmail($username)) {
+                    $stmt = $db->prepare("SELECT id, username, password_hash, is_active FROM users WHERE email = ?");
+                    $stmt->execute([$username]);
+                    $user = $stmt->fetch();
+                }
+
+                // Против тайминг-энумерации: verify выполняется всегда.
                 $hash = $user ? $user['password_hash'] : DUMMY_PASSWORD_HASH;
                 $ok = password_verify($password, $hash);
 
                 if ($user && $ok && $user['is_active']) {
-                    rateLimitClear('login_pair', $pairKey);
+                    loginPairClear($pairKey);
 
                     session_regenerate_id(true);
                     unset($_SESSION['guest_seen'], $_SESSION['viewed_topics'], $_SESSION['attach_dl']);
-                    $_SESSION['user_id'] = $user['id'];
+                    $_SESSION['user_id'] = (int)$user['id'];
                     $_SESSION['username'] = $user['username'];
-                    unset($_SESSION['csrf_token']);
+                    csrfReset();
                     generateCSRFToken();
 
-                    $stmt = $db->prepare("UPDATE users SET last_login = NOW() WHERE id = ?");
-                    $stmt->execute([$user['id']]);
+                    $db->prepare("UPDATE users SET last_login = NOW() WHERE id = ?")->execute([$user['id']]);
 
                     setFlashMessage('success', 'Добро пожаловать, ' . $user['username'] . '!');
                     redirect('/index.php');

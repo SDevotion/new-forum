@@ -1,4 +1,15 @@
 <?php
+// auth/reset.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [6.массовый 500] Ввод через postStr()/getStr(): массивы в token/password не фаталят.
+// [2.9] После смены пароля пул CSRF текущей (гостевой) сессии тоже сбрасывается —
+//       старые токены страницы сброса не переживают смену пароля.
+// [new] Атомарное «погашение» токена: DELETE ... и проверка rowCount вместо
+//       SELECT-then-UPDATE — два параллельных POST с одним токеном не могут оба
+//       сменить пароль (второй получает «ссылка недействительна»).
+// Токен только в POST-теле, PRG, удаление всех сессий пользователя — сохранены.
+
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/ratelimit.php';
 
@@ -13,31 +24,34 @@ $token = '';
 
 $db = Database::getInstance()->getConnection();
 
+/** Проверка токена -> userId (0 если невалиден). */
+$resolveToken = function ($t) use ($db) {
+    if (!is_string($t) || !preg_match('/^[a-f0-9]{64}$/', $t)) return 0;
+    $stmt = $db->prepare("
+        SELECT r.user_id FROM password_resets r
+        JOIN users u ON u.id = r.user_id AND u.is_active = 1
+        WHERE r.token_hash = ? AND r.expires_at > NOW()
+    ");
+    $stmt->execute([hash('sha256', $t)]);
+    return (int)$stmt->fetchColumn();
+};
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Токен приходит только в теле POST (не в URL) — не утекает в Referer/логи.
-    $token = $_POST['token'] ?? '';
-    if (is_string($token) && preg_match('/^[a-f0-9]{64}$/', $token)) {
-        $stmt = $db->prepare("
-            SELECT r.user_id FROM password_resets r
-            JOIN users u ON u.id = r.user_id AND u.is_active = 1
-            WHERE r.token_hash = ? AND r.expires_at > NOW()
-        ");
-        $stmt->execute([hash('sha256', $token)]);
-        $userId = (int)$stmt->fetchColumn();
-        $validToken = $userId > 0;
-    }
+    $token = postStr('token');
+    $userId = $resolveToken($token);
+    $validToken = $userId > 0;
 
     if (!$validToken) {
         $errors[] = 'Ссылка недействительна или истекла. Запросите восстановление заново.';
-    } elseif (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
+    } elseif (!verifyCSRFToken(postStr('csrf_token'))) {
         $errors[] = 'Недействительный запрос. Обновите страницу.';
     } elseif (!rateLimitCheck('reset', 30, 900, true)) {
         $errors[] = 'Слишком много попыток. Подождите 15 минут.';
     } else {
-        $new = $_POST['new_password'] ?? '';
-        $confirm = $_POST['new_password_confirm'] ?? '';
+        $new = postStr('new_password');
+        $confirm = postStr('new_password_confirm');
 
-        if (!is_string($new) || mb_strlen($new) < setting('password_min', 6)) {
+        if (mb_strlen($new) < setting('password_min', 6)) {
             $errors[] = 'Пароль должен содержать минимум ' . setting('password_min', 6) . ' символов';
         } elseif (strlen($new) > 4096) {
             $errors[] = 'Пароль слишком длинный';
@@ -48,33 +62,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$errors) {
             try {
                 $db->beginTransaction();
-                $db->prepare("UPDATE users SET password_hash = ? WHERE id = ?")
-                   ->execute([password_hash($new, PASSWORD_DEFAULT), $userId]);
-                $db->prepare("DELETE FROM password_resets WHERE user_id = ?")->execute([$userId]);
-                $db->prepare("DELETE FROM user_sessions WHERE user_id = ?")->execute([$userId]);
-                $db->commit();
-                // PRG: уходим с URL, содержащего токен; результат показываем на чистом URL.
-                redirect('/auth/reset.php?done=1');
+
+                // Атомарное погашение: ровно один параллельный POST выиграет.
+                $st = $db->prepare("DELETE FROM password_resets WHERE token_hash = ? AND expires_at > NOW()");
+                $st->execute([hash('sha256', $token)]);
+                if ($st->rowCount() !== 1) {
+                    $db->rollBack();
+                    $errors[] = 'Ссылка уже использована. Запросите восстановление заново.';
+                } else {
+                    $db->prepare("UPDATE users SET password_hash = ? WHERE id = ?")
+                       ->execute([password_hash($new, PASSWORD_DEFAULT), $userId]);
+                    $db->prepare("DELETE FROM password_resets WHERE user_id = ?")->execute([$userId]);
+                    $db->prepare("DELETE FROM user_sessions WHERE user_id = ?")->execute([$userId]);
+                    $db->commit();
+
+                    csrfReset(); // токены страницы сброса больше не действуют
+                    redirect('/auth/reset.php?done=1');
+                }
             } catch (PDOException $e) {
                 if ($db->inTransaction()) $db->rollBack();
                 error_log('Reset error: ' . $e->getMessage());
                 $errors[] = 'Ошибка при сохранении. Попробуйте позже.';
             }
         }
+        if ($errors) rateLimitRefund('reset', true);
     }
 } else {
-    // GET: токен в URL только для первичного перехода из письма.
-    $token = $_GET['token'] ?? '';
-    if (is_string($token) && preg_match('/^[a-f0-9]{64}$/', $token)) {
-        $stmt = $db->prepare("
-            SELECT r.user_id FROM password_resets r
-            JOIN users u ON u.id = r.user_id AND u.is_active = 1
-            WHERE r.token_hash = ? AND r.expires_at > NOW()
-        ");
-        $stmt->execute([hash('sha256', $token)]);
-        $userId = (int)$stmt->fetchColumn();
-        $validToken = $userId > 0;
-    }
+    $token = getStr('token');
+    $userId = $resolveToken($token);
+    $validToken = $userId > 0;
 }
 
 require_once __DIR__ . '/../includes/header.php';
@@ -96,7 +112,6 @@ require_once __DIR__ . '/../includes/header.php';
                 <div class="alert alert-error"><ul class="error-list"><?php foreach ($errors as $e): ?><li><?= escape($e) ?></li><?php endforeach; ?></ul></div>
             <?php endif; ?>
             <?php if ($validToken): ?>
-            <!-- Форма POSTит на чистый URL: токен только в hidden-поле, не в query -->
             <form method="POST" action="/auth/reset.php" class="auth-form">
                 <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
                 <input type="hidden" name="token" value="<?= escape($token) ?>">

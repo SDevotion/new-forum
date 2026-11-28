@@ -1,4 +1,11 @@
 <?php
+// moderation/index.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [6.массовый 500] status/page через getStr()/getInt().
+// [4.2] Счётчик новых жалоб в шапке — через кэшированный newReportsCount().
+// Логика панели не менялась.
+
 require_once __DIR__ . '/../includes/permissions.php';
 require_once __DIR__ . '/../includes/markdown.php';
 require_once __DIR__ . '/../includes/pagination.php';
@@ -12,15 +19,14 @@ $stats = [
     'users'   => (int)$db->query("SELECT COUNT(*) FROM users")->fetchColumn(),
     'topics'  => (int)$db->query("SELECT COUNT(*) FROM topics")->fetchColumn(),
     'posts'   => (int)$db->query("SELECT COUNT(*) FROM posts")->fetchColumn(),
-    'reports' => (int)$db->query("SELECT COUNT(*) FROM reports WHERE status='new'")->fetchColumn(),
+    'reports' => newReportsCount(),
 ];
 
-// ===== Жалобы: фильтр по статусу + пагинация =====
-$statusFilter = $_GET['status'] ?? 'new';
+$statusFilter = getStr('status', 'new');
 if (!in_array($statusFilter, ['all', 'new', 'resolved', 'rejected'], true)) $statusFilter = 'new';
 
 $perPage = max(1, setting('per_page_staff', 15));
-$page = max(1, (int)($_GET['page'] ?? 1));
+$page = max(1, getInt('page', 1));
 
 $whereSql = $statusFilter === 'all' ? '' : "WHERE r.status = ?";
 $whereParams = $statusFilter === 'all' ? [] : [$statusFilter];
@@ -47,7 +53,6 @@ $reports = $st->fetchAll();
 $reportsBase = '/moderation/index.php?status=' . $statusFilter;
 $reportsBack = escape($reportsBase . '&page=' . $page);
 
-// Превью целей — двумя пакетными запросами вместо запроса на каждую жалобу
 $topicIds = []; $postIds = [];
 foreach ($reports as $r) {
     if ($r['target_type'] === 'topic') $topicIds[] = (int)$r['target_id'];

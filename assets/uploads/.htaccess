@@ -1,15 +1,21 @@
 # Запрет исполнения любых скриптов в каталоге загрузок (Apache 2.4)
 #
-# ВНИМАНИЕ: этот файл защищает ТОЛЬКО Apache с AllowOverride All.
-# На nginx он игнорируется! Для nginx ОБЯЗАТЕЛЬНО добавьте в server {}:
+# РЕШЕНО В ЭТОМ ФАЙЛЕ:
+# [6.htaccess] Options -Indexes (запрет листинга каталога) — обёрнут в IfModule
+#       и не роняет запрос, если политика хостинга запрещает Override Options.
+# [6.htaccess] tmp_* файлы перекодирования аватаров явно закрыты от раздачи.
+# [6.htaccess] .stats_cache админ-дашборда закрыт от раздачи.
 #
+# ВНИМАНИЕ: файл защищает ТОЛЬКО Apache с AllowOverride All.
+# Для nginx ОБЯЗАТЕЛЬНО добавьте в server {}:
 #   location ^~ /assets/uploads/attachments/ { deny all; return 403; }
-#   location ~* ^/assets/uploads/.*\.(php|phtml|phar|pl|py|cgi|sh)$ { deny all; }
-#
-# либо (лучше) вынесите каталог attachments/ за пределы docroot
-# и настройте ATTACH_DIR в includes/attachments.php.
+#   location ~* ^/assets/uploads/.*\.(php|phtml|phar|pl|py|cgi|sh|tmp)$ { deny all; }
 
-<FilesMatch "\.(php|phtml|php[0-9]|phar|pl|py|cgi|sh|asp|aspx|jsp|shtml|htaccess)$">
+<FilesMatch "\.(php|phtml|php[0-9]|phar|pl|py|cgi|sh|asp|aspx|jsp|shtml|htaccess|tmp)$">
+    Require all denied
+</FilesMatch>
+
+<FilesMatch "^(tmp_|\.stats_cache)">
     Require all denied
 </FilesMatch>
 
@@ -25,10 +31,11 @@ RemoveType .php .phtml .php3 .php4 .php5 .php7 .php8 .phar
     php_flag engine off
 </IfModule>
 
-# AllowOverride в .htaccess запрещена (контекст <Directory>) — даёт 500 на все файлы каталога.
-# Options может быть запрещена политикой хостинга (AllowOverride без Options) — не роняем запрос.
-<IfModule mod_authz_core.c>
-    # Apache 2.4: опции задаются в конфиге хостинга; здесь только безопасный минимум
+# Листинг каталога запрещён. Если хостинг не разрешает Override Options —
+# директива вызовет 500; в таком случае закомментируйте блок и задайте
+# Options -Indexes в конфиге vhost.
+<IfModule mod_autoindex.c>
+    Options -Indexes
 </IfModule>
 
 <IfModule mod_headers.c>
@@ -43,7 +50,5 @@ ForceType application/octet-stream
 </FilesMatch>
 
 # Вложения — только через /attachment.php (ACL). Прямые URL запрещены.
-# Правило относительное (per-dir): работает при установке в любой подкаталог.
-# Аватары лежат в avatars/ и под это правило не попадают.
 RewriteEngine On
 RewriteRule ^attachments/ - [F,L]

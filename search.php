@@ -1,4 +1,14 @@
 <?php
+// search.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [3.6] COUNT действительно лёгкий: отдельные COUNT-запросы по темам/постам без
+//       коррелированного replies_count и без выборки content (раньше str_replace
+//       оставлял дорогой подзапрос в COUNT). Хрупкая строковая замена удалена.
+// [3.6] Лог поиска пишется с ИСХОДНОЙ страницей запроса (до клампа page>totalPages).
+// [6.массовый 500] Ввод через getStr()/getInt().
+// FULLTEXT-логика, фильтры, подсветка — сохранены.
+
 require_once __DIR__ . '/includes/functions.php';
 require_once __DIR__ . '/includes/permissions.php';
 require_once __DIR__ . '/includes/search.php';
@@ -11,19 +21,20 @@ $db = Database::getInstance()->getConnection();
 $me = getCurrentUser();
 $staff = isModerator();
 
-$q       = trim($_GET['q'] ?? '');
-$scope   = $_GET['scope'] ?? 'all';
-$forumId = (int)($_GET['forum_id'] ?? 0);
-$author  = trim($_GET['author'] ?? '');
-$sort    = $_GET['sort'] ?? 'relevance';
-$period  = $_GET['period'] ?? 'any';
+$q       = trim(getStr('q'));
+$scope   = getStr('scope', 'all');
+$forumId = getInt('forum_id');
+$author  = trim(getStr('author'));
+$sort    = getStr('sort', 'relevance');
+$period  = getStr('period', 'any');
 
 if (!in_array($scope, ['all', 'topics', 'posts'], true)) $scope = 'all';
 if (!in_array($sort, ['relevance', 'new', 'old'], true)) $sort = 'relevance';
 if (!in_array($period, ['any', 'week', 'month', 'year'], true)) $period = 'any';
 
 $perPage = max(1, setting('per_page_search', 15));
-$page = max(1, (int)($_GET['page'] ?? 1));
+$requestedPage = max(1, getInt('page', 1));
+$page = $requestedPage;
 $offset = ($page - 1) * $perPage;
 
 $results = [];
@@ -69,6 +80,12 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < $searchMin) {
     $dateT   = $dateSql ? sprintf($dateSql, 't') : '';
     $dateP   = $dateSql ? sprintf($dateSql, 'p') : '';
 
+    // Общие WHERE-фрагменты (используются и данными, и COUNT — без расхождений).
+    $whereTopics = "MATCH(t.title, t.content) AGAINST (? IN BOOLEAN MODE)
+          AND f.is_active = 1 AND c.is_active = 1 $hiddenT $forumT $authT $dateT";
+    $wherePosts = "MATCH(p.content) AGAINST (? IN BOOLEAN MODE)
+          AND f.is_active = 1 AND c.is_active = 1$hiddenT $hiddenP $forumP $authP $dateP";
+
     $sqlTopics = "
         SELECT 'topic' AS kind, t.id, t.id AS topic_id, t.title, LEFT(t.content, 4000) AS content,
                t.created_at,
@@ -80,11 +97,8 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < $searchMin) {
         JOIN users u ON u.id = t.user_id
         JOIN forums f ON f.id = t.forum_id
         JOIN categories c ON c.id = f.category_id
-        WHERE MATCH(t.title, t.content) AGAINST (? IN BOOLEAN MODE)
-          AND f.is_active = 1 AND c.is_active = 1
-          $hiddenT $forumT $authT $dateT
+        WHERE $whereTopics
     ";
-
     $sqlPosts = "
         SELECT 'post' AS kind, p.id, p.topic_id, t.title, LEFT(p.content, 4000) AS content,
                p.created_at, 0 AS replies_count, 0 AS views_count,
@@ -95,10 +109,19 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < $searchMin) {
         JOIN users u ON u.id = p.user_id
         JOIN forums f ON f.id = t.forum_id
         JOIN categories c ON c.id = f.category_id
-        WHERE MATCH(p.content) AGAINST (? IN BOOLEAN MODE)
-          AND f.is_active = 1 AND c.is_active = 1$hiddenT
-          $hiddenP $forumP $authP $dateP
+        WHERE $wherePosts
     ";
+
+    // Лёгкие COUNT: без content, без replies_count, без score.
+    $cntTopics = "SELECT COUNT(*) FROM topics t
+        JOIN forums f ON f.id = t.forum_id
+        JOIN categories c ON c.id = f.category_id
+        WHERE $whereTopics";
+    $cntPosts = "SELECT COUNT(*) FROM posts p
+        JOIN topics t ON t.id = p.topic_id
+        JOIN forums f ON f.id = t.forum_id
+        JOIN categories c ON c.id = f.category_id
+        WHERE $wherePosts";
 
     $order = $sort === 'relevance' ? 'score DESC, created_at DESC, kind ASC, id DESC'
            : ($sort === 'new' ? 'created_at DESC, kind ASC, id DESC' : 'created_at ASC, kind ASC, id ASC');
@@ -107,15 +130,27 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < $searchMin) {
         if ($scope === 'topics') {
             $inner = $sqlTopics;
             $params = [$staff ? 1 : 0, $ft, $ft];
+            $cntSql = $cntTopics; $cntParams = [$ft];
         } elseif ($scope === 'posts') {
             $inner = $sqlPosts;
             $params = [$ft, $ft];
+            $cntSql = $cntPosts; $cntParams = [$ft];
         } else {
             $inner = "$sqlTopics UNION ALL $sqlPosts";
             $params = [$staff ? 1 : 0, $ft, $ft, $ft, $ft];
+            $cntSql = "SELECT ($cntTopics) + ($cntPosts)"; $cntParams = [$ft, $ft];
         }
 
-        // Страница данных: LIMIT применяется к сортировке без материализации total.
+        $cnt = $db->prepare($cntSql);
+        $cnt->execute($cntParams);
+        $total = (int)$cnt->fetchColumn();
+
+        $totalPages = max(1, (int)ceil($total / $perPage));
+        if ($page > $totalPages) {
+            $page = $totalPages;
+            $offset = ($page - 1) * $perPage;
+        }
+
         $st = $db->prepare("
             SELECT x.* FROM ($inner) x
             ORDER BY $order
@@ -124,32 +159,8 @@ if (mb_strlen($q) > 0 && mb_strlen($q) < $searchMin) {
         $st->execute($params);
         $results = $st->fetchAll();
 
-        // Total — отдельным лёгким COUNT поверх тех же условий (без выборки content).
-        // Оконный COUNT(*) OVER () материализовал весь UNION на каждой странице.
-        $cntInner = str_replace(
-            ['LEFT(t.content, 4000) AS content', 'LEFT(p.content, 4000) AS content'],
-            ['NULL AS content', 'NULL AS content'],
-            $inner
-        );
-        $cnt = $db->prepare("SELECT COUNT(*) FROM ($cntInner) x");
-        $cnt->execute($params);
-        $total = (int)$cnt->fetchColumn();
-
-        $totalPages = max(1, (int)ceil($total / $perPage));
-        if ($page > $totalPages) {
-            $page = $totalPages;
-            $offset = ($page - 1) * $perPage;
-            $st = $db->prepare("
-                SELECT x.* FROM ($inner) x
-                ORDER BY $order
-                LIMIT $perPage OFFSET $offset
-            ");
-            $st->execute($params);
-            $results = $st->fetchAll();
-        }
-
-        // Лог поиска — только первая страница
-        if ($page === 1 && mb_strlen($q) >= $searchMin) {
+        // Лог — только если клиент запросил первую страницу (до клампа).
+        if ($requestedPage === 1 && mb_strlen($q) >= $searchMin) {
             try {
                 $db->prepare("INSERT INTO search_log (user_id, query, results) VALUES (?,?,?)")
                    ->execute([$me ? $me['id'] : null, mb_substr($q, 0, 200), $total]);
@@ -168,7 +179,6 @@ $forumsList = $db->query("
     ORDER BY c.sort_order, f.sort_order
 ")->fetchAll();
 
-// «Часто ищут» — только для модерации: тексты чужих запросов приватны.
 $popular = [];
 if ($staff) {
     try {

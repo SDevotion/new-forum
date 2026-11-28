@@ -1,4 +1,12 @@
 <?php
+// profile.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [6.массовый 500] Ввод через getInt()/getStr() — массивы в id/tab/page не фаталят.
+// [new] website в профиле рендерится только если проходит http(s)-валидацию
+//       (данные могли попасть в БД до валидации в profile/edit.php).
+// Логика вкладок/счётчиков не менялась.
+
 require_once __DIR__ . '/includes/functions.php';
 require_once __DIR__ . '/includes/permissions.php';
 require_once __DIR__ . '/includes/avatar.php';
@@ -8,9 +16,8 @@ require_once __DIR__ . '/includes/pagination.php';
 
 $db = Database::getInstance()->getConnection();
 $currentUser = getCurrentUser();
-$userId = (int)($_GET['id'] ?? 0);
+$userId = getInt('id');
 
-// Без id — свой профиль
 if (!$userId && $currentUser) {
     $userId = (int)$currentUser['id'];
 }
@@ -38,7 +45,6 @@ $isStaff = isModerator();
 $staffFlag = $isStaff ? 1 : 0;
 $roles = ['user' => 'Участник', 'moderator' => 'Модератор', 'admin' => 'Администратор'];
 
-// Видимые счётчики (совпадают со списками ниже; стафф видит и скрытое)
 $stmt = $db->prepare("
     SELECT COUNT(*) FROM topics t
     JOIN forums f ON f.id = t.forum_id
@@ -59,10 +65,9 @@ $stmt = $db->prepare("
 $stmt->execute([$userId, $staffFlag, $staffFlag]);
 $visiblePosts = (int)$stmt->fetchColumn();
 
-// Вкладка
-$tab = ($_GET['tab'] ?? 'topics') === 'posts' ? 'posts' : 'topics';
+$tab = getStr('tab', 'topics') === 'posts' ? 'posts' : 'topics';
 $perPage = max(1, setting('per_page_posts', 15));
-$page = max(1, (int)($_GET['page'] ?? 1));
+$page = max(1, getInt('page', 1));
 $offset = ($page - 1) * $perPage;
 
 if ($tab === 'topics') {
@@ -103,6 +108,9 @@ if ($tab === 'topics') {
 }
 $items = $stmt->fetchAll();
 
+$websiteSafe = ($profile['website'] && preg_match('#^https?://#i', $profile['website'])
+                && filter_var($profile['website'], FILTER_VALIDATE_URL)) ? $profile['website'] : null;
+
 require_once __DIR__ . '/includes/header.php';
 ?>
 
@@ -134,8 +142,8 @@ require_once __DIR__ . '/includes/header.php';
                 <?php if ($profile['location']): ?>
                     <span>📍 <?= escape($profile['location']) ?></span>
                 <?php endif; ?>
-                <?php if ($profile['website']): ?>
-                    <span>🔗 <a href="<?= escape($profile['website']) ?>" target="_blank" rel="noopener nofollow noreferrer"><?= escape($profile['website']) ?></a></span>
+                <?php if ($websiteSafe): ?>
+                    <span>🔗 <a href="<?= escape($websiteSafe) ?>" target="_blank" rel="noopener nofollow noreferrer"><?= escape($websiteSafe) ?></a></span>
                 <?php endif; ?>
                 <span>📅 На форуме с <?= date('d.m.Y', strtotime($profile['created_at'])) ?></span>
                 <?php $lastSeen = $profile['last_activity'] ?: $profile['last_login']; ?>

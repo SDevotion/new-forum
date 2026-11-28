@@ -1,4 +1,10 @@
 <?php
+// members.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [6.массовый 500] Ввод через getStr()/getInt() — массивы в sort/q/page не фаталят.
+// Логика не менялась.
+
 require_once __DIR__ . '/includes/functions.php';
 require_once __DIR__ . '/includes/permissions.php';
 require_once __DIR__ . '/includes/avatar.php';
@@ -8,12 +14,12 @@ require_once __DIR__ . '/includes/pagination.php';
 $pageTitle = 'Участники';
 $db = Database::getInstance()->getConnection();
 
-$sort = $_GET['sort'] ?? 'posts';
+$sort = getStr('sort', 'posts');
 if (!in_array($sort, ['posts', 'topics', 'new', 'name'], true)) $sort = 'posts';
-$q = trim($_GET['q'] ?? '');
+$q = trim(getStr('q'));
 
 $perPage = max(1, setting('per_page_members', 15));
-$page = max(1, (int)($_GET['page'] ?? 1));
+$page = max(1, getInt('page', 1));
 $offset = ($page - 1) * $perPage;
 
 $where = ["is_active = 1"];

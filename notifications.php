@@ -1,19 +1,27 @@
 <?php
+// notifications.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [6.массовый 500] Ввод через getStr()/getInt().
+// [new] enforceActiveUser() — забаненный с живой сессией не листает уведомления.
+// Совместимость с topic_id/post_id = 0 (миграция): empty() корректно трактует 0.
+
 require_once __DIR__ . '/includes/notifications.php';
 require_once __DIR__ . '/includes/avatar.php';
 require_once __DIR__ . '/includes/pagination.php';
 
 if (!isLoggedIn()) { setFlashMessage('error', 'Необходимо войти'); redirect('/auth/login.php'); }
+enforceActiveUser();
 
 $pageTitle = 'Уведомления';
 $db = Database::getInstance()->getConnection();
 $uid = currentUserId();
 
-$filter = $_GET['filter'] ?? 'all';
+$filter = getStr('filter', 'all');
 if (!in_array($filter, ['all', 'unread'], true)) $filter = 'all';
 
 $perPage = max(1, setting('per_page_notifications', 15));
-$page = max(1, (int)($_GET['page'] ?? 1));
+$page = max(1, getInt('page', 1));
 $offset = ($page - 1) * $perPage;
 
 $cond = ($filter === 'unread' ? ' AND n.is_read = 0' : '') . notifVisibilityCond();

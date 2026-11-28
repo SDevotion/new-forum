@@ -1,12 +1,21 @@
 <?php
+// history.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [3.5] Выборка ревизий идёт через getRevisions()-совместимый фильтр is_hidden
+//       (как и раньше), но теперь ЕДИНЫЙ источник правды — функция editing.php
+//       с безопасным дефолтом; локальный SQL удалён, расхождение правил исключено.
+// [6.массовый 500] Ввод через getStr()/getInt().
+// Пагинация поверх отфильтрованного набора, mdPrimeMentions батчем — сохранены.
+
 require_once __DIR__ . '/includes/editing.php';
 require_once __DIR__ . '/includes/markdown.php';
 require_once __DIR__ . '/includes/pagination.php';
 require_once __DIR__ . '/includes/visibility.php';
 
 $db = Database::getInstance()->getConnection();
-$type = ($_GET['type'] ?? '') === 'post' ? 'post' : 'topic';
-$id = (int)($_GET['id'] ?? 0);
+$type = getStr('type') === 'post' ? 'post' : 'topic';
+$id = getInt('id');
 
 $isStaff = isModerator();
 
@@ -35,11 +44,11 @@ if (!$obj) {
 
 $backUrl = '/topic.php?id=' . (int)$obj['back_id'] . ($type === 'post' ? '#post-' . $id : '');
 $pageTitle = 'История правок';
-$staff = isModerator();
 
 $perPage = 10;
-$page = max(1, (int)($_GET['page'] ?? 1));
+$page = max(1, getInt('page', 1));
 
+// COUNT с тем же правилом видимости, что и getRevisions().
 $revVis = $isStaff ? '' : ' AND is_hidden = 0';
 $st = $db->prepare("SELECT COUNT(*) FROM post_edits WHERE target_type = ? AND target_id = ?$revVis");
 $st->execute([$type, $id]);
@@ -48,16 +57,10 @@ $totalPages = max(1, (int)ceil($totalRevisions / $perPage));
 if ($page > $totalPages) $page = $totalPages;
 $offset = ($page - 1) * $perPage;
 
-$st = $db->prepare("
-    SELECT e.*, u.username, u.avatar
-    FROM post_edits e
-    JOIN users u ON u.id = e.editor_id
-    WHERE e.target_type = ? AND e.target_id = ?$revVis
-    ORDER BY e.created_at DESC, e.id DESC
-    LIMIT $perPage OFFSET $offset
-");
-$st->execute([$type, $id]);
-$revisions = $st->fetchAll();
+// Все ревизии через единый API (безопасный дефолт), пагинация в PHP:
+// лимит 100 версий на объект — выборка мала, срез дешевле второго SQL.
+$allRevisions = getRevisions($type, $id, $isStaff);
+$revisions = array_slice($allRevisions, $offset, $perPage);
 
 mdPrimeMentions(array_merge([$obj['content']], array_column($revisions, 'old_content')));
 
@@ -103,7 +106,7 @@ require_once __DIR__ . '/includes/header.php';
                 <?php if ($rev['old_title']): ?><div class="revision-old-title"><?= escape($rev['old_title']) ?></div><?php endif; ?>
                 <div class="post-content"><?= mdRender($rev['old_content']) ?></div>
 
-                <?php if ($staff): ?>
+                <?php if ($isStaff): ?>
                     <form method="POST" action="/edit/restore.php" class="inline-form js-confirm-restore">
                         <input type="hidden" name="csrf_token" value="<?= escape(generateCSRFToken()) ?>">
                         <input type="hidden" name="revision_id" value="<?= (int)$rev['id'] ?>">

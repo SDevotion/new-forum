@@ -1,4 +1,10 @@
 <?php
+// stats.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [6.массовый 500] period через getStr() — массив не фаталит in_array/конкатенацию.
+// Логика рейтингов не менялась.
+
 require_once __DIR__ . '/includes/functions.php';
 require_once __DIR__ . '/includes/permissions.php';
 require_once __DIR__ . '/includes/avatar.php';
@@ -9,7 +15,7 @@ $db = Database::getInstance()->getConnection();
 $totals = getForumTotals();
 $online = getOnlineList();
 
-$period = $_GET['period'] ?? 'all';
+$period = getStr('period', 'all');
 if (!in_array($period, ['all', 'month', 'week'], true)) $period = 'all';
 
 $dateCondP = '';
@@ -17,8 +23,6 @@ $dateCondT = '';
 if ($period === 'month') { $dateCondP = " AND p.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)"; $dateCondT = " AND t.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)"; }
 if ($period === 'week')  { $dateCondP = " AND p.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)";  $dateCondT = " AND t.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)"; }
 
-// Топ по сообщениям: единая методика для всех периодов —
-// только видимые посты в активных разделах (без дрейфующего posts_total).
 $topPosters = $db->query("
     SELECT u.id, u.username, u.avatar, u.role, COUNT(p.id) AS cnt
     FROM posts p
@@ -32,7 +36,6 @@ $topPosters = $db->query("
     ORDER BY cnt DESC, u.id ASC LIMIT 10
 ")->fetchAll();
 
-// Топ по темам
 $topAuthors = $db->query("
     SELECT u.id, u.username, u.avatar, u.role, COUNT(t.id) AS cnt
     FROM topics t
@@ -45,7 +48,6 @@ $topAuthors = $db->query("
     ORDER BY cnt DESC, u.id ASC LIMIT 10
 ")->fetchAll();
 
-// Популярные темы (вес и счётчик — по видимым ответам)
 $popTopics = $db->query("
     SELECT t.id, t.title, t.views_count, u.username,
            (SELECT COUNT(*) FROM posts vp WHERE vp.topic_id = t.id AND vp.is_hidden = 0) AS visible_replies
@@ -57,8 +59,6 @@ $popTopics = $db->query("
     ORDER BY ((SELECT COUNT(*) FROM posts vp WHERE vp.topic_id = t.id AND vp.is_hidden = 0) * 2 + t.views_count / 10) DESC, t.id DESC LIMIT 10
 ")->fetchAll();
 
-// Активность за 14 дней. NB: дни фиксировались триггерами по CURDATE() на момент
-// записи; смена APP_TIMEZONE задним числом границы прошлых дней не меняет.
 $chart = $db->query("
     SELECT day, topics, posts, users FROM forum_stats_daily
     WHERE day >= DATE_SUB(CURDATE(), INTERVAL 13 DAY)
@@ -81,7 +81,6 @@ for ($i = 13; $i >= 0; $i--) {
 $maxVal = 1;
 foreach ($series as $s) $maxVal = max($maxVal, $s['posts'], $s['topics'], $s['users']);
 
-// Активные разделы: фактические видимые счётчики, а не сырой posts_count
 $topForums = $db->query("
     SELECT f.id, f.title, f.icon,
            (SELECT COUNT(*) FROM topics t WHERE t.forum_id = f.id AND t.is_hidden = 0)

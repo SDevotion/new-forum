@@ -1,4 +1,16 @@
 <?php
+// topic.php
+//
+// РЕШЕНО В ЭТОМ ФАЙЛЕ:
+// [1.4/приоритет#6] Гостевой счётчик просмотров больше не пишет строку в post_dedup
+//       на каждый IP×тему: дедуп живёт в APCu (TTL 1 час, ключ ip+topic, ~50 байт
+//       в памяти вместо строки БД + DELETE/INSERT на каждый хит). Без APCu —
+//       фолбэк на post_dedup, но ТОЛЬКО для не-ботов (эвристика UA) и с чисткой cron.
+// [3.1] replies_count в шаблоне — единый смысл «видимые ответы»; поле БД не
+//       перезаписывается в рантайме (локальная переменная), дрейф значения исключён.
+// [6.массовый 500] Ввод через getInt().
+// Пагинация, права, формы — без изменений.
+
 require_once __DIR__ . '/includes/functions.php';
 require_once __DIR__ . '/includes/permissions.php';
 require_once __DIR__ . '/includes/visibility.php';
@@ -8,11 +20,10 @@ require_once __DIR__ . '/includes/notifications.php';
 require_once __DIR__ . '/includes/attachments.php';
 
 $db = Database::getInstance()->getConnection();
-$topicId = (int)($_GET['id'] ?? 0);
+$topicId = getInt('id');
 
 $isStaff = isModerator();
 
-// Загрузка темы + проверка видимости — единый хелпер
 $topic = loadVisibleTopic($topicId);
 
 if (!$topic) {
@@ -24,21 +35,35 @@ if (!$topic) {
     exit;
 }
 
-// Счётчик просмотров: участники — раз за сессию (не автор/стафф);
-// гости — не чаще раза в час на IP+тему (антинакрутка без cookie-jar).
+// ===== Счётчик просмотров =====
 $isAuthorView = isLoggedIn() && (int)$_SESSION['user_id'] === (int)$topic['user_id'];
 $countView = false;
 if (isLoggedIn() && !$isStaff && !$isAuthorView) {
     $countView = sessionMarkOnce('viewed_topics', $topicId);
 } elseif (!isLoggedIn()) {
     require_once __DIR__ . '/includes/ratelimit.php';
-    $vKey = 'ip' . rateLimitIp() . ':t' . $topicId;
-    try {
-        $db->prepare("DELETE FROM post_dedup WHERE dedup_key = ? AND created_at < (NOW() - INTERVAL 1 HOUR)")
-           ->execute([$vKey]);
-        $db->prepare("INSERT INTO post_dedup (dedup_key) VALUES (?)")->execute([$vKey]);
-        $countView = true;
-    } catch (PDOException $e) { /* параллельный хит — уже посчитан */ }
+    $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
+    $isBot = $ua === '' || preg_match('~bot|crawl|spider|slurp|preview|fetch|monitor|curl|wget|python|http-client~i', $ua) === 1;
+
+    $apcu = function_exists('apcu_fetch') && (!function_exists('apcu_enabled') || apcu_enabled());
+    if ($apcu) {
+        // Дедуп в памяти воркера: ноль записей в БД на гостевые хиты.
+        $k = 'tv:' . md5(rateLimitIp() . ':' . $topicId);
+        $hit = apcu_fetch($k, $ok);
+        if (!$ok || !$hit) {
+            apcu_store($k, 1, 3600);
+            $countView = !$isBot; // ботам просмотры не начисляем вовсе
+        }
+    } elseif (!$isBot) {
+        // Фолбэк без APCu: только люди, ключ в post_dedup (чистит cron).
+        $vKey = 'ip' . rateLimitIp() . ':t' . $topicId;
+        try {
+            $db->prepare("DELETE FROM post_dedup WHERE dedup_key = ? AND created_at < (NOW() - INTERVAL 1 HOUR)")
+               ->execute([$vKey]);
+            $db->prepare("INSERT INTO post_dedup (dedup_key) VALUES (?)")->execute([$vKey]);
+            $countView = true;
+        } catch (PDOException $e) { /* параллельный хит — уже посчитан */ }
+    }
 }
 if ($countView) {
     $db->prepare("UPDATE topics SET views_count = views_count + 1 WHERE id = ?")->execute([$topicId]);
@@ -48,15 +73,14 @@ if ($countView) {
 $pageTitle = $topic['title'];
 $currentUser = getCurrentUser();
 
-// Пагинация ответов
 require_once __DIR__ . '/includes/pagination.php';
 $perPage = max(1, setting('per_page_posts', 15));
-$page = max(1, (int)($_GET['page'] ?? 1));
+$page = max(1, getInt('page', 1));
 
 $stmt = $db->prepare("SELECT COUNT(*) FROM posts WHERE topic_id = ? AND (is_hidden = 0 OR ? = 1)");
 $stmt->execute([$topicId, $isStaff ? 1 : 0]);
 $visibleReplies = (int)$stmt->fetchColumn();
-$topic['replies_count'] = $visibleReplies;
+// НЕ перезаписываем $topic['replies_count']: в шаблоне используем $visibleReplies.
 
 $totalPages = max(1, (int)ceil($visibleReplies / $perPage));
 if ($page > $totalPages) $page = $totalPages;
@@ -75,10 +99,8 @@ $stmt = $db->prepare("
 $stmt->execute([$topicId, $isStaff ? 1 : 0]);
 $posts = $stmt->fetchAll();
 
-// Предзагрузка упоминаний одним запросом на всю страницу
 mdPrimeMentions(array_merge([$topic['content']], array_column($posts, 'content')));
 
-// Вложения: первое сообщение + ответы текущей страницы
 $topicAttachments = attachForObject('topic', $topicId);
 $postAttachments = attachForTargets('post', array_column($posts, 'id'));
 
@@ -90,7 +112,6 @@ $forumClosed = setting('forum_closed', false) && !isModerator();
 $canReply = isLoggedIn() && !$topic['is_closed'] && !$topic['is_hidden'] && !$forumClosed;
 $subscribed = isSubscribed($topicId);
 
-// Флаги редактирования: автор не правит скрытое/закрытое, стафф — всегда
 $topicEditFlags = ['is_hidden' => (bool)$topic['is_hidden'], 'topic_closed' => (bool)$topic['is_closed']];
 
 require_once __DIR__ . '/includes/header.php';
@@ -125,7 +146,7 @@ require_once __DIR__ . '/includes/header.php';
             <button type="button" class="btn-link btn-report" data-type="topic" data-id="<?= $topicId ?>">Пожаловаться на тему</button>
         <?php endif; ?>
         <span>👁 <?= (int)$topic['views_count'] ?> просмотров</span>
-        <span>💬 <?= (int)$topic['replies_count'] ?> ответов</span>
+        <span>💬 <?= $visibleReplies ?> ответов</span>
         <span>🕒 <?= date('d.m.Y H:i', strtotime($topic['created_at'])) ?></span>
     </div>
 </div>
@@ -174,7 +195,6 @@ require_once __DIR__ . '/includes/header.php';
     <?php endif; ?>
 <?php endif; ?>
 
-<!-- Первое сообщение темы -->
 <div class="post-card post-first">
     <div class="post-author">
         <a href="/profile.php?id=<?= (int)$topic['author_id'] ?>" class="post-author-link">
@@ -304,7 +324,6 @@ require_once __DIR__ . '/includes/header.php';
     <?php renderPagination($page, $totalPages, '/topic.php?id=' . $topicId); ?>
 <?php endif; ?>
 
-<!-- Форма ответа -->
 <?php if ($canReply): ?>
     <div class="reply-box" id="reply">
         <h3 class="reply-title">Ваш ответ</h3>
